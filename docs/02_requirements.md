@@ -1,0 +1,488 @@
+# AWS Internal Lab 要件定義書
+
+- 文書種別: 要件定義書
+- 対象: 社内AWS学習・検証基盤
+- リポジトリ: `aws-internal-lab`
+- 初版日: 2026-10-05
+- ステータス: 初版レビュー
+
+## 1. 文書目的
+
+本書は、AWS Internal Lab の初期リリースに必要な業務要件、機能要件、非機能要件、セキュリティ要件、運用要件を定義する。
+
+初期リリースの主目的は、課題・採点型研修ではなく、利用者が AWS サービス相当のリソースを自由に作成・変更・削除できる Lab 環境を安全に提供することである。
+
+## 2. 前提
+
+- システムは社内向けに提供する。
+- システム基盤は AWS 上に配置する。
+- 管理系永続データは実 AWS の Aurora PostgreSQL、S3 等を利用してよい。
+- AWS 互換エミュレータの第一候補は MiniStack とする。
+- MiniStack の挙動差異や未対応機能は、サービス側の Adapter、社内拡張、必要に応じた fork で補完可能な構造とする。
+- AWS Management Console の完全な外観コピーは行わず、概念、サービス構造、操作フローを学習可能な独自 UI とする。
+- 利用者が扱う Lab データは原則使い捨てとし、永続保存を保証しない。
+
+## 3. 用語
+
+| 用語 | 定義 |
+| --- | --- |
+| Lab | 利用者ごとに払い出される独立した AWS エミュレーション環境 |
+| Standard Lab | ECS/Fargate 等、Docker daemon を必要としない標準実行環境 |
+| Advanced Lab | RDS/ECS/EKS 等、追加コンテナ実行が必要なサービス向け専用実行環境 |
+| Control Plane | AWS リソースの作成、設定、参照、更新、削除等の管理 API |
+| Data Plane | 実際のコード実行、DB接続、データ処理等の実行処理 |
+| Lab Engine | AWS API 互換挙動を提供するバックエンド。初期候補は MiniStack |
+| Compatibility Matrix | AWS サービスごとの対応レベル、制約、差異を管理する一覧 |
+| BFF | Browser から Lab Engine へのアクセスを仲介する Backend for Frontend / API 層 |
+
+## 4. 利用者区分
+
+### 4.1 Learner / User
+
+- 自身の Lab を開始できる。
+- 自身の Lab 内の AWS サービス画面を利用できる。
+- 自身の Lab をリセット・終了できる。
+- 他利用者の Lab は参照・操作できない。
+
+### 4.2 Operator
+
+- 稼働 Lab を参照できる。
+- Lab の状態、利用者、開始時刻、TTL、利用量を確認できる。
+- 問題のある Lab を強制終了できる。
+- サービス提供可否やメンテナンス状態を確認できる。
+
+### 4.3 Administrator
+
+Operator 権限に加え、以下を行える。
+
+- 利用可能サービスの制御
+- Quota / TTL 設定
+- Compatibility Matrix 管理
+- システム設定変更
+- Audit 参照
+- 緊急停止
+
+## 5. 業務要件
+
+### BR-001 自由利用型 Lab
+
+利用者は課題や教材を選択しなくても Lab を開始でき、提供対象の AWS サービスを自由に操作できること。
+
+### BR-002 利用者分離
+
+利用者の操作が他利用者の Lab、サービス提供基盤、既存業務システムへ影響しないこと。
+
+### BR-003 幅広い AWS サービス対応
+
+特定サービスだけに限定せず、技術的に実現可能な限り幅広い AWS サービスを対象とすること。
+
+### BR-004 対応レベルの明示
+
+各サービスについて、実 AWS と同等に利用できる範囲と、再現されない範囲を利用者に説明可能であること。
+
+### BR-005 低コスト反復利用
+
+Lab の作成、破棄、再作成を繰り返しても、実 AWS リソースを利用者単位で直接払い出す方式と比べてコストを抑えられること。
+
+### BR-006 事故影響の局所化
+
+初学者の誤操作、大量リソース作成、不適切な設定等が発生しても、サービス提供側で影響を局所化・停止できること。
+
+## 6. 機能要件
+
+## 6.1 認証・認可
+
+### FR-AUTH-001 社内認証
+
+社内 SSO と連携して利用者を認証できること。
+
+### FR-AUTH-002 ロール管理
+
+Learner / Operator / Administrator の権限を分離できること。
+
+### FR-AUTH-003 Lab 所有者チェック
+
+すべての利用者向け Lab API で、認証ユーザーと Lab owner の一致を検証すること。
+
+### FR-AUTH-004 Lab Engine 直接アクセス禁止
+
+利用者 Browser から Lab Engine の管理ポート/APIへ直接アクセスできないこと。
+
+## 6.2 Lab ライフサイクル
+
+### FR-LAB-001 Lab 開始
+
+利用者は UI から Lab を開始できること。
+
+### FR-LAB-002 Lab 状態
+
+Lab は最低限以下の状態を持つこと。
+
+- provisioning
+- ready
+- stopping
+- stopped
+- failed
+- expired
+
+### FR-LAB-003 Lab リセット
+
+利用者は自身の Lab を初期状態へリセットできること。
+
+### FR-LAB-004 Lab 終了
+
+利用者は自身の Lab を明示的に終了できること。
+
+### FR-LAB-005 TTL
+
+Lab は設定された TTL を超過した場合、自動停止または自動破棄されること。
+
+### FR-LAB-006 Idle timeout
+
+一定時間操作がない Lab を自動停止できる構造を持つこと。
+
+### FR-LAB-007 強制終了
+
+Operator / Administrator が任意の Lab を強制終了できること。
+
+### FR-LAB-008 同時 Lab 数制限
+
+利用者単位または全体で同時 Lab 数を制御できること。
+
+## 6.3 AWS サービス UI
+
+### FR-UI-001 サービス一覧
+
+提供対象 AWS サービスを一覧表示できること。
+
+### FR-UI-002 サービス状態表示
+
+各サービスについて以下を表示できること。
+
+- 提供可否
+- 対応レベル L1/L2/L3
+- 既知の制約
+- 実 AWS との差異
+
+### FR-UI-003 独自 Console UI
+
+AWS の概念モデルや操作フローを学習できる独自 UI を提供すること。
+
+### FR-UI-004 CRUD 操作
+
+対応サービスについて、技術的に可能な範囲でリソースの Create / Read / Update / Delete を行えること。
+
+### FR-UI-005 非本番表示
+
+すべての Lab 画面で、本環境が Training / Lab 環境であることを認識できる表示を行うこと。
+
+## 6.4 サービス対応レベル
+
+### FR-COMP-001 L1
+
+L1 対応サービスでは、Control Plane 上の主要なリソース作成・設定・参照・削除を行えること。
+
+### FR-COMP-002 L2
+
+L2 対応サービスでは、主要 API とサービス間連携が実行可能であること。
+
+### FR-COMP-003 L3
+
+L3 対応サービスでは、実コード、DB、コンテナ等の Data Plane を実行できること。
+
+### FR-COMP-004 Matrix 管理
+
+Compatibility Matrix をシステム管理情報として保持できること。
+
+### FR-COMP-005 Provider 抽象化
+
+UI / API 層が MiniStack 固有実装へ直接依存せず、Service Adapter / Provider 経由で Lab Engine を利用すること。
+
+## 6.5 Quota / Guardrail
+
+### FR-GUARD-001 CPU / Memory 制限
+
+Lab ごとに CPU / Memory 上限を設定できること。
+
+### FR-GUARD-002 Storage 制限
+
+Lab ごとに一時ストレージ上限を設定できること。
+
+### FR-GUARD-003 Resource Quota
+
+サービス・リソース種別ごとに作成上限を設定できる構造を持つこと。
+
+### FR-GUARD-004 Request Rate Limit
+
+短時間の過剰 API 呼び出しを制限できること。
+
+### FR-GUARD-005 Service Allowlist
+
+利用可能な AWS サービスを環境単位・利用者区分単位等で制御可能な構造を持つこと。
+
+### FR-GUARD-006 危険機能の無効化
+
+外部送信、host 権限、privileged 実行等を伴う機能を明示的に無効化または Advanced Lab に隔離できること。
+
+## 6.6 ネットワーク
+
+### FR-NET-001 Private 配置
+
+Lab 実行環境は原則 Private Subnet に配置し、Public IP を持たないこと。
+
+### FR-NET-002 Inbound 制御
+
+Lab Engine への通信元をサービス側 BFF/API 等の必要コンポーネントへ限定すること。
+
+### FR-NET-003 Outbound Default Deny
+
+Lab から Internet、社内業務ネットワーク、本番 AWS 資産への任意通信を原則許可しないこと。
+
+### FR-NET-004 必要通信 Allowlist
+
+ECR、CloudWatch Logs 等、Lab 実行上必要な通信は VPC Endpoint 等を優先して明示許可すること。
+
+### FR-NET-005 Advanced Lab 分離
+
+Docker daemon 等を利用する Advanced Lab は Standard Lab と実行基盤・Security Group・IAM Role 等を分離すること。
+
+## 6.7 データ保護
+
+### FR-DATA-001 Lab データ非永続
+
+利用者が Lab 内で作成したデータは、原則 Lab 終了時に破棄されること。
+
+### FR-DATA-002 Platform Data 分離
+
+Lab 内データと、Aurora/S3 等に保存する Platform 管理データを分離すること。
+
+### FR-DATA-003 禁止データ表示
+
+利用者に対し、以下の投入禁止を UI 上で明示すること。
+
+- 個人情報
+- 顧客情報
+- 社外秘情報
+- 本番データ
+- 本番 Credentials
+- Private Key
+- 本番 DB Dump
+
+### FR-DATA-004 Secret / Payload 非記録
+
+Audit Log に以下を原則保存しないこと。
+
+- Secret 値
+- Object 本体
+- Request Body 全文
+- Lambda source code 全文
+- DB レコード本文
+
+### FR-DATA-005 暗号化
+
+Platform が永続保存する管理データは AWS 標準の暗号化機能を利用すること。
+
+## 6.8 Audit / 運用管理
+
+### FR-AUDIT-001 操作 Audit
+
+最低限以下を記録すること。
+
+- timestamp
+- user
+- lab id
+- service
+- action
+- resource identifier
+- result
+
+### FR-AUDIT-002 管理操作 Audit
+
+Lab 強制停止、設定変更等の管理操作も記録すること。
+
+### FR-AUDIT-003 Active Lab 一覧
+
+Operator は稼働中 Lab を一覧表示できること。
+
+### FR-AUDIT-004 利用量表示
+
+可能な範囲で CPU、Memory、Storage、Resource Count 等を確認できること。
+
+### FR-AUDIT-005 Kill Switch
+
+運用者は個別 Lab、および必要に応じて新規 Lab 起動全体を緊急停止できること。
+
+## 6.9 MiniStack / Emulator 管理
+
+### FR-EMU-001 Version Pin
+
+採用する Lab Engine のバージョンを固定できること。
+
+### FR-EMU-002 社内 Mirror
+
+利用 Container Image や Source を社内管理可能な場所へ mirror できること。
+
+### FR-EMU-003 Upstream 差分管理
+
+社内変更と upstream MiniStack の差分を追跡できること。
+
+### FR-EMU-004 Fork 可能性
+
+必要に応じて MiniStack の MIT License 範囲で社内 fork へ移行可能であること。
+
+### FR-EMU-005 SBOM / License
+
+MiniStack および依存パッケージの SBOM / License Scan を実施できること。
+
+## 7. 非機能要件
+
+## 7.1 セキュリティ
+
+### NFR-SEC-001 最小権限
+
+ECS Task Role、EC2 Instance Profile、運用 IAM Role 等は最小権限とすること。
+
+### NFR-SEC-002 実 AWS 資産分離
+
+Lab 実行 Role に、既存業務 AWS リソースへの汎用アクセス権を付与しないこと。
+
+### NFR-SEC-003 Docker socket
+
+Web/API/Standard Lab へ Docker socket をマウントしないこと。
+
+### NFR-SEC-004 Advanced Worker
+
+Container runtime を必要とする場合は専用 Advanced Worker のみで利用すること。
+
+### NFR-SEC-005 脆弱性管理
+
+Lab Engine、OS/Container Image、依存ライブラリの脆弱性を継続確認できること。
+
+### NFR-SEC-006 法務・情報セキュリティレビュー
+
+正式社内展開前に、少なくとも情報セキュリティ、法務/知財、社内規程担当のレビュー対象とすること。
+
+## 7.2 可用性
+
+### NFR-AVL-001 Control Plane
+
+Web/API/管理 DB 等の Control Plane は、単一 Lab 障害に巻き込まれないこと。
+
+### NFR-AVL-002 Lab 障害分離
+
+1 Lab の crash、OOM、異常終了が他 Lab を停止させないこと。
+
+### NFR-AVL-003 自動回復
+
+Control Plane は ECS 等の標準機能で自動再起動できること。
+
+## 7.3 性能
+
+### NFR-PERF-001 Lab 起動時間
+
+初期リリースでは Lab 起動時間に厳密な SLA は設けないが、継続計測し改善可能であること。
+
+### NFR-PERF-002 UI 応答
+
+通常の一覧・設定画面は、Lab Engine の応答遅延を除き社内 Web アプリとして実用的なレスポンスを維持すること。
+
+## 7.4 拡張性
+
+### NFR-EXT-001 Service Adapter
+
+新しい AWS サービスを既存サービスへ大きな影響を与えず追加できること。
+
+### NFR-EXT-002 Emulator 交換可能性
+
+MiniStack の変更・fork・別 Emulator 採用が UI 全面改修へ直結しないこと。
+
+### NFR-EXT-003 Advanced 実行基盤
+
+Standard Lab と Advanced Lab の実行基盤を独立して拡張できること。
+
+## 7.5 保守性
+
+### NFR-MNT-001 Infrastructure as Code
+
+AWS 基盤構成を IaC で管理すること。
+
+### NFR-MNT-002 Configuration as Code
+
+サービス対応レベル、Feature Flag、基本 Quota 等をコードまたはバージョン管理可能な設定として保持すること。
+
+### NFR-MNT-003 Compatibility Test
+
+対応を宣言する AWS API について回帰テスト可能な構造を持つこと。
+
+## 8. データ要件
+
+Platform 側で最低限保持するデータは以下とする。
+
+- User
+- Role
+- LabSession
+- LabRuntime
+- ServiceCapability
+- CompatibilityNote
+- QuotaPolicy
+- AuditEvent
+- SystemSetting
+
+利用者が Lab 内へ投入した Object、DB データ、Secret、Lambda source 等は Platform 管理 DB の業務データとして保存しない。
+
+## 9. 運用要件
+
+- 稼働 Lab 一覧を確認できること。
+- Lab の異常終了を検知できること。
+- Lab Engine version を確認できること。
+- 新規 Lab 起動を停止するメンテナンスモードを持てること。
+- 個別 Lab を強制削除できること。
+- Compatibility Matrix を更新できること。
+- 脆弱性情報や upstream 更新を定期確認する運用を定義すること。
+- Audit Log の保存期間は社内基準に合わせて基本設計・運用設計で確定すること。
+
+## 10. 利用ルール要件
+
+利用開始時または常時確認可能な場所に以下を明示する。
+
+- 本サービスは非本番の学習・検証 Lab である。
+- データ永続性を保証しない。
+- Lab は予告なくリセット・削除される場合がある。
+- 機密情報、個人情報、本番データ、本番資格情報を投入してはならない。
+- 本番システムや顧客サービス用途に使用してはならない。
+- 不適切利用が確認された場合、運営者が Lab を停止できる。
+
+## 11. 初期リリース受入条件
+
+初期リリースは以下をすべて満たした状態を最低条件とする。
+
+1. 社内認証済み利用者が Lab を開始できる。
+2. 利用者 A が利用者 B の Lab を参照・操作できない。
+3. Standard Lab が Private Network 内に配置される。
+4. Browser から Lab Engine 管理 API へ直接到達できない。
+5. 少なくとも複数の AWS サービスについてリソース CRUD を実行できる。
+6. Lab リセットと終了が動作する。
+7. TTL による自動終了が動作する。
+8. Operator が Lab を強制終了できる。
+9. 操作 Audit が記録される。
+10. Audit に Secret / Object Body 等が記録されない。
+11. Lab から既存業務 AWS リソースへ汎用アクセスできない。
+12. Compatibility Matrix によりサービス対応状況を説明できる。
+13. 採用 MiniStack version / image digest が固定される。
+14. SBOM / License Scan の実施方法が確立される。
+15. 情報セキュリティ・法務/知財レビューに提示可能な構成・責任分界が文書化される。
+
+## 12. 後続要件候補
+
+初期 Lab 基盤確立後、別要件として以下を検討する。
+
+- Challenge / 課題管理
+- 自動採点
+- コース・進捗管理
+- Browser Terminal
+- CLI Credentials 発行
+- Terraform / OpenTofu / CDK
+- 障害注入
+- Lab Template / Snapshot
+- 講師用一括 Lab 配布
+- 実 AWS Sandbox 連携
