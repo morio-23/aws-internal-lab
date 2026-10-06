@@ -1,0 +1,21 @@
+# AWS Internal Lab ドキュメント一覧
+
+本ディレクトリの文書は以下の優先関係で管理する。
+
+| 文書 | 役割 |
+| --- | --- |
+| `01_project_proposal.md` | 企画目的・スコープ・意思決定方針 |
+| `02_requirements.md` | 業務要件・機能要件・非機能要件 |
+| `03_basic_design.md` | AWS基盤・Lab Runtime・データ・ネットワーク等の基本設計 |
+| `04_ip_guidelines.md` | AWS Console再現に関する知財・ブランド利用ルール |
+| `05_incident_guardrails.md` | 事故想定、技術的ガードレール、Severity、封じ込め・復旧・Runbook要件 |
+
+`04_ip_guidelines.md` と `05_incident_guardrails.md` は補足資料ではなく、それぞれ知財・安全設計に関する規範文書として扱う。
+
+実装・レビュー時に要件定義書または基本設計書と解釈が衝突する場合は、企画意図を確認した上で文書間の不整合を解消し、いずれかを黙示的に無視しない。
+
+## 今後追加予定
+
+- `service-compatibility.md` - AWSサービス別 L1/L2/L3、Snapshot対応状況、Known Differences
+- `runbooks/` - 事故種別の具体Runbook
+- `adr/` - 重要なアーキテクチャ意思決定
