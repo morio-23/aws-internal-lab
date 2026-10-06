@@ -25,6 +25,7 @@
 9. 機微データを保持しない設計を優先し、Audit も最小限のメタデータに限定する。
 10. AWS Management Console の現行画面を UI 設計の基準とし、画面構成、ナビゲーション、設定項目、項目順、操作導線を可能な限り再現する。Lab で習得した手順を実 AWS Management Console でそのまま適用できることを優先する。
 11. Lab 固有の安全表示、Quota、TTL、Compatibility 情報は AWS Console 再現部分と区別して付加する。
+12. 操作・情報構造の再現と、AWSブランド/trade dress/著作物の直接コピーを分離する。
 
 ## 3. システム構成
 
@@ -658,6 +659,21 @@ AWS Management Consoleの変更は定期的に確認し、学習上重要な画�
 
 スクリーンショット等の保存・共有方法は社内ルールおよび法務・知財レビュー結果に従う。
 
+## 13.6 知財を考慮したUI実装方式
+
+UIは reference-based reimplementation とする。
+
+1. 現行AWS Management Consoleを操作し、学習上必要な画面、項目、順序、状態遷移を仕様化する。
+2. AWS ConsoleのHTML、CSS、JavaScript、DOM、画像、SVG等はコピーせず、自社のUIコンポーネントで実装する。
+3. AWS仕様に由来するサービス名、リソース名、設定項目名、選択肢、既定値、操作順序は学習整合性のため再現する。
+4. AWS固有のブランド配色、フォント、グラフィック、製品アイコンを組み合わせたtrade dressは実装要件に含めない。
+5. AWSの説明文、ヘルプ文、長文エラー等は原則自社文言とする。
+6. 実AWS Consoleとの操作手順比較と、知財チェックを同じUIレビュー工程で実施する。
+
+Lab共通Header等には、AWS公式サービスとの誤認を避けるため、社内学習用LabでありAWSが提供・承認・運営するサービスではない旨を識別可能に表示する。
+
+詳細ルールは `04_ip_guidelines.md` を正とする。
+
 ## 14. API基本設計
 
 APIは概念上以下の区分に分ける。
@@ -791,8 +807,12 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 7. IAM Role / IMDS経由で実AWS Credentialを取得できないこと
 8. SBOM / OSS License
 9. AWS Management Consoleの画面・操作再現に伴う商標・著作物・ブランド資産の利用範囲
-10. Audit保存期間と閲覧権限
-11. Incident時の責任分界と利用規約
+10. AWSロゴ、配色、フォント、グラフィック、製品アイコン等を直接コピーしていないこと
+11. AWS ConsoleのHTML/CSS/JavaScript/画像等を直接流用していないこと
+12. AWS公式サービスとの誤認防止表示
+13. AWS Consoleスクリーンショットの社内参照方法と保存範囲
+14. Audit保存期間と閲覧権限
+15. Incident時の責任分界と利用規約
 
 ## 19. 段階リリース
 
@@ -803,6 +823,7 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 - Network隔離検証
 - S3/IAM/DynamoDB/SQS等の代表API検証
 - 代表サービスのAWS Management Console実画面・操作フロー調査
+- UI再現方式の知財チェック
 - License/SBOM確認
 
 ### Phase 1: Standard Lab MVP
@@ -849,6 +870,7 @@ aws-internal-lab/
 │  ├─ 01_project_proposal.md
 │  ├─ 02_requirements.md
 │  ├─ 03_basic_design.md
+│  ├─ 04_ip_guidelines.md
 │  ├─ service-compatibility.md       # 後続
 │  └─ adr/                           # 後続
 │
@@ -889,7 +911,7 @@ aws-internal-lab/
 - DLP補助機能の初期導入有無
 - 外部通信を許可するサービスの扱い
 - AWS Management ConsoleのUI差分確認・更新頻度
-- AWSブランド資産・スクリーンショット等の利用範囲
+- AWSブランド資産・スクリーンショット等の最終的な利用範囲
 - UI実装Framework
 - IaCツール
 
@@ -903,3 +925,66 @@ aws-internal-lab/
 - MiniStack Limitations: https://ministack.org/docs/limitations
 - MiniStack Configuration: https://ministack.org/docs/configuration
 - AWS ECS/Fargate security considerations: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-security-considerations.html
+- AWS Trademark Guidelines & License Terms: https://aws.amazon.com/trademark-guidelines/
+- AWS Site Terms: https://aws.amazon.com/terms/
+- AWS Architecture Icons: https://aws.amazon.com/architecture/icons/
+- AWS Internal Lab 知財・ブランド利用ガイドライン: `04_ip_guidelines.md`
+
+## 23. 知財・ブランド設計
+
+### 23.1 設計境界
+
+本サービスでは、AWS Management Consoleの「機能・情報構造・操作順序」と「AWSの視覚・ブランド表現」を別レイヤーとして扱う。
+
+再現対象:
+
+- サービス/リソース概念
+- ナビゲーションの論理構造
+- タブ、設定セクション、フォーム項目
+- 項目順、選択肢、既定値
+- 画面遷移
+- 作成/変更/削除の操作手順
+
+直接コピーしない対象:
+
+- AWSロゴ、AWS Smile Logo
+- AWS固有のブランド配色
+- AWS固有フォント
+- AWS固有のgraphic design
+- AWS Consoleの製品アイコン/ボタンアイコン
+- AWS ConsoleのHTML/CSS/JavaScript/DOM
+- AWS Consoleから抽出した画像/SVG/sprite等
+- AWSの説明文・ヘルプ文章等の長文著作物
+
+### 23.2 誤認防止
+
+共通Header等に、少なくとも以下の趣旨を常時表示する。
+
+```text
+社内学習用Lab
+AWS Management Consoleの操作学習を目的とした社内環境です。
+AWSが提供・承認・運営するサービスではありません。
+```
+
+### 23.3 スクリーンショット
+
+AWS Consoleのスクリーンショットは、現行画面との差分確認・社内設計レビューに必要な最小限の範囲でのみ使用する。
+
+- 製品配布物へ恒久同梱しない。
+- 公開サイト・営業資料へ流用しない。
+- アカウントID、ARN、メールアドレス等の社内/顧客情報を含めない。
+- 社外利用が必要となった場合は再レビューする。
+
+### 23.4 UIレビューゲート
+
+サービスUIのレビューでは、機能再現に加えて以下をチェックする。
+
+- AWSロゴの無断利用がないこと
+- AWS固有の配色/フォント/グラフィック/製品アイコンをそのままコピーしていないこと
+- AWS ConsoleのHTML/CSS/JavaScript/画像を流用していないこと
+- AWSの長文説明を転載していないこと
+- AWS公式サービスと誤認しないこと
+- Lab固有表示が明確であること
+- Labで覚えた操作を実AWSで再現できること
+
+詳細は `04_ip_guidelines.md` に従う。
