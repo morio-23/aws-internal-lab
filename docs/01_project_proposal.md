@@ -169,7 +169,22 @@ MiniStackの公開方針やライセンスが将来変更された場合でも�
 
 AWS Management Consoleは継続的に変更されるため、対象サービスの現行画面との差分を定期的に確認し、学習上重要な変更へ追従する。Lab固有のTTL、Quota、Compatibility、Training表示等はAWS Console再現部分と区別して追加表示する。
 
-AWSロゴ、サービスアイコン、画面表現等の利用範囲は、実操作再現の要件を前提に正式展開前の法務・知財レビューで確認する。
+### 9.1 知財・ブランド観点の解消方針
+
+実操作学習のため、画面構成、情報階層、項目名称・項目順、タブ、ウィザード、操作導線等は実AWS Management Consoleを基準に再現する。一方、AWS公式ガイドライン上のtrade dress / look and feelに関する懸念を低減するため、以下を明確に分離する。
+
+- AWSロゴ、AWS Smile Logoは自社サービスのブランド表示として使用しない。
+- AWS ConsoleのHTML、CSS、JavaScript、画像、SVG、sprite等を直接流用しない。
+- AWS固有の配色、フォント、グラフィック、製品アイコンを組み合わせた視覚表現そのものはコピーせず、自社実装とする。
+- AWSの説明文、ヘルプ文、長いエラーメッセージ等は原則として転載せず、自社文言へ置き換える。
+- AWSサービス名、設定項目名等は、対応対象を正確に示し実操作を学習するための事実上必要な参照として使用する。
+- AWS公式、AWS公認、AWS提供サービスであるとの誤認を避けるため、社内学習用LabでありAWSが提供・承認・運営するサービスではない旨を常時識別可能にする。
+- スクリーンショットは社内の設計・レビュー上必要な最小限の参照に限定し、製品アセットとして恒久同梱しない。
+- 本サービスは社内SSO配下に限定し、一般公開・社外販売・広告利用を行わない。
+
+社内限定・教育目的であることはリスク低減要素として扱うが、それ自体によってAWSの商標・著作権・ブランド利用条件が適用されなくなるとは扱わない。
+
+詳細な実装・レビュー基準は `04_ip_guidelines.md` に定義し、正式展開前に法務・知財レビューで利用範囲を確定する。
 
 ## 10. 基盤方針
 
@@ -382,7 +397,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 | 利用者コードから社内/Internetへ通信 | Lab Outbound Default Deny、allowlist方式 |
 | Docker Engine権限悪用 | FargateとAdvanced Labを分離し、Advanced LabはEC2単位で使い捨てる |
 | 実AWS認証情報の窃取 | Lab Task Roleを原則付与せず、IMDSへの到達を遮断する |
-| AWS UI/商標・ブランド資産の利用範囲 | 実AWS Consoleの操作再現を要件としたうえで、正式展開前に社内法務/知財レビューを行い利用範囲を確定する |
+| AWS UI/商標・ブランド資産の利用範囲 | 操作仕様は再現しつつ、AWSロゴ・固有配色・フォント・グラフィック・製品アイコン・HTML/CSS/JS等の直接コピーを避ける。社内限定・誤認防止表示・正式展開前の法務/知財レビューを組み合わせる |
 | AWS Console更新による画面差異 | 現行Consoleとの差分を定期確認し、学習上重要な変更へ追従する |
 | AWSコスト増大 | TTL、Quota、同時実行制限、Budgets、Advanced Labの必要時起動を適用する |
 
@@ -392,6 +407,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 
 - Lab用途を課題・採点より優先する。
 - AWS Management Consoleの実画面・操作導線を再現対象とし、実操作を学べることをUIの第一要件とする。
+- 操作・情報構造の再現と、AWSのブランド/trade dressのコピーは別物として扱う。
 - 対象サービスを限定的な数サービスへ固定せず、可能な限り全AWSサービスへ拡張する。
 - 全サービスでL1を目標とし、L2/L3はサービス特性とエミュレータ能力に応じて提供する。
 - MiniStackを初期エンジンとするが、MiniStack固有仕様へUI/Control Planeを密結合させない。
@@ -400,6 +416,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 - Docker-backed機能はAdvanced Labへ分離する。
 - Labは機密情報を扱う基盤ではない。
 - 利用者の禁止事項だけではなく、技術的ガードレールを責任分界の前提とする。
+- 知財・ブランド利用の具体ルールは `04_ip_guidelines.md` を正とする。
 
 ## 18. 参考情報
 
@@ -409,7 +426,10 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 - Amazon ECS Fargate Security Considerations: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-security-considerations.html
 - Amazon ECS Fargate Task Networking: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html
 - Amazon ECS Fargate Task Storage: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-storage.html
+- AWS Trademark Guidelines & License Terms: https://aws.amazon.com/trademark-guidelines/
+- AWS Site Terms: https://aws.amazon.com/terms/
+- AWS Internal Lab 知財・ブランド利用ガイドライン: `04_ip_guidelines.md`
 
 ---
 
-本書は企画目的と意思決定の基準を定義する。具体的な機能要件・非機能要件は `02_requirements.md`、AWS構成・コンポーネント・データフロー・セキュリティ境界は `03_basic_design.md` に定義する。
+本書は企画目的と意思決定の基準を定義する。具体的な機能要件・非機能要件は `02_requirements.md`、AWS構成・コンポーネント・データフロー・セキュリティ境界は `03_basic_design.md`、知財・ブランド利用ルールは `04_ip_guidelines.md` に定義する。
