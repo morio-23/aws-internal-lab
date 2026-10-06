@@ -10,7 +10,7 @@
 
 AWS Internal Labは、AWSの主要サービスを社内で安全かつ低コストに試せるラボ環境を提供するための社内基盤である。
 
-利用者はAWS Management Consoleに近い情報構造と操作フローを持つ独自Web UIから、S3、IAM、Lambda、DynamoDB、SQS、EC2、VPC、RDS、ECS、EKS等のAWSサービスに相当するリソースを作成・変更・削除できる。バックエンドにはAWS互換エミュレータを利用し、実AWSリソースの直接作成を原則として避けることで、反復学習時のコストと事故影響を抑える。
+利用者はAWS Management Consoleの実画面・情報構造・操作導線を基準に再現したLab Consoleから、S3、IAM、Lambda、DynamoDB、SQS、EC2、VPC、RDS、ECS、EKS等のAWSサービスに相当するリソースを作成・変更・削除できる。Labで習得した画面操作や設定手順を実AWS Management Consoleでもそのまま適用できることを重視する。バックエンドにはAWS互換エミュレータを利用し、実AWSリソースの直接作成を原則として避けることで、反復学習時のコストと事故影響を抑える。
 
 初期フェーズでは課題・採点・研修コース機能を主目的とせず、利用者が自由にリソース構築を試せる「AWS Playground / Lab」としての価値を優先する。将来的に課題型研修、トラブルシューティング演習、CLI/IaC演習、実AWS Sandboxへの接続等を追加できる拡張性を持たせる。
 
@@ -31,12 +31,13 @@ AWS Jam等の仕組みは実AWS Sandboxを利用するため実環境に近い�
 
 本企画の目的は次の通りである。
 
-1. AWSのサービス構成・概念・操作方法を、実AWSへの影響を抑えて学習できる環境を提供する。
+1. AWS Management Consoleの実操作を、実AWSへの影響を抑えて学習できる環境を提供する。
 2. 利用者が自由に構築・破壊・再構築できる使い捨てLabを提供する。
 3. 利用者の誤操作や悪意のない過失が、他利用者・社内ネットワーク・本番AWS環境へ波及しない構造を実現する。
 4. 可能な限り広いAWSサービスを対象とし、少なくともリソース構成・設定操作を体験できる状態を目指す。
-5. OSSを活用しつつ、必要に応じて社内で機能追加・フォークを継続できる技術基盤を持つ。
-6. 将来的な研修課題、採点、CLI、Terraform/CloudFormation/CDK、障害対応演習等の上位機能に再利用できる基盤を作る。
+5. Lab上で身につけた画面操作、設定項目の位置、作成・更新・削除手順を実AWS Management Consoleへ直接転用できることを目指す。
+6. OSSを活用しつつ、必要に応じて社内で機能追加・フォークを継続できる技術基盤を持つ。
+7. 将来的な研修課題、採点、CLI、Terraform/CloudFormation/CDK、障害対応演習等の上位機能に再利用できる基盤を作る。
 
 ## 4. 対象利用者
 
@@ -57,7 +58,8 @@ AWS Jam等の仕組みは実AWS Sandboxを利用するため実環境に近い�
 
 - 実AWS料金を強く意識せず試行錯誤できる。
 - リソースを壊してもLabをリセットしてやり直せる。
-- AWSに近いサービス分類、用語、設定項目、操作順序を学べる。
+- AWS Management Consoleと同等の画面構成・設定項目・操作順序を学べる。
+- Labで覚えた操作を実AWS Management Consoleへ移行しやすい。
 - Console操作を起点に、将来的にはCLIやIaCへ同じLabを利用できる。
 
 ### 5.2 管理・教育部門向け
@@ -82,7 +84,7 @@ AWS Jam等の仕組みは実AWS Sandboxを利用するため実環境に近い�
 - 社内認証によるログイン
 - 利用者単位のLab起動・停止・リセット
 - AWSサービス一覧
-- 各サービスのAWSに近い情報構造を持つ独自UI
+- AWS Management Consoleの現行画面を基準にした各サービスのConsole UI
 - AWS互換APIを利用したリソース作成・参照・更新・削除
 - 利用者間のLab分離
 - リソースQuota
@@ -111,7 +113,6 @@ AWS Jam等の仕組みは実AWS Sandboxを利用するため実環境に近い�
 - 本番システムのホスティング
 - 本番データの保存
 - 実AWSと完全同一の性能・可用性・SLAの再現
-- AWS Consoleのピクセル単位での複製
 - AWSサービスの課金体系そのものの完全再現
 
 ## 7. AWSサービス対応方針
@@ -122,7 +123,7 @@ AWS Jam等の仕組みは実AWS Sandboxを利用するため実環境に近い�
 
 | レベル | 名称 | 定義 |
 | --- | --- | --- |
-| L1 | Console / Control Plane | リソース作成・設定・関連付け・削除等の構成操作を体験できる |
+| L1 | Console / Control Plane | AWS Management Consoleの実操作に近い形で、リソース作成・設定・関連付け・削除等の構成操作を体験できる |
 | L2 | Functional Emulator | AWS API間の連携や主要なサービス動作を実行できる |
 | L3 | Executable Data Plane | 実コード、DB、コンテナ等の実行系を伴う処理まで体験できる |
 
@@ -151,23 +152,24 @@ MiniStackの公開方針やライセンスが将来変更された場合でも�
 
 ## 9. UI方針
 
-UIはAWS利用者が本物のAWSへ移行した際に知識を転用できるよう、以下をAWSに近づける。
+本サービスの主要な学習価値は、AWS Management Consoleの実操作をLab環境で反復練習できることに置く。
 
-- サービス名称
-- AWSの概念モデル
-- リソース階層
-- 主要な設定項目
-- 設定を探す思考順序
-- Create / Update / Delete等の操作フロー
+各サービス画面はAWS Management Consoleの現行画面を基準とし、可能な限り以下を一致させる。
 
-一方、AWS公式サイトやAWS Management Consoleの外観をそのまま複製することは避ける。
+- サービス名称とサービス内ナビゲーション
+- 画面構成と情報階層
+- タブ構成
+- リソース名称とリソース関係
+- 主要な設定項目と項目順
+- 一覧・詳細・作成・編集・削除の画面遷移
+- Create / Update / Delete等の操作導線
+- 学習上重要な確認ダイアログや選択手順
 
-- 独自配色
-- 独自アイコン
-- 独自コンポーネント
-- 独自レイアウト
+単にAWSの概念を説明する独自UIではなく、Labで行った手順を実AWS Management Consoleでも同じ考え方・同じ操作順序で実行できることを目標とする。
 
-を利用し、「AWSの概念と操作を学べる独自Lab Console」として設計する。
+AWS Management Consoleは継続的に変更されるため、対象サービスの現行画面との差分を定期的に確認し、学習上重要な変更へ追従する。Lab固有のTTL、Quota、Compatibility、Training表示等はAWS Console再現部分と区別して追加表示する。
+
+AWSロゴ、サービスアイコン、画面表現等の利用範囲は、実操作再現の要件を前提に正式展開前の法務・知財レビューで確認する。
 
 ## 10. 基盤方針
 
@@ -290,7 +292,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 - 運用管理者がLabデータへアクセス可能な範囲
 - インシデント時の調査手順
 - 利用者責任と提供者責任
-- AWS商標・UI表現
+- AWS商標・UI表現・ブランド資産の利用範囲
 - OSSライセンス
 
 ## 13. 監査方針
@@ -325,6 +327,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 - Lab起動/停止/リセット
 - Standard Lab
 - S3 / IAM / STS / DynamoDB / SQS等の主要サービスUI
+- AWS Management Consoleとの主要操作導線照合
 - Audit / Quota / TTL
 - 管理画面
 
@@ -336,6 +339,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 - CloudFormation
 - VPC / EC2等のControl Plane系
 - サービス対応表の拡充
+- AWS Management Consoleの画面変更追従
 
 ### Phase 3: Advanced Lab
 
@@ -363,9 +367,10 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 - 利用中の重大な分離違反件数
 - 予算超過・削除漏れ件数
 - 対応AWSサービス数とL1/L2/L3カバレッジ
-- 利用者が実AWSへ移行した際の操作理解度
+- 利用者がLabで習得した手順を実AWS Management Consoleで再現できる割合
 - 運用担当者による手作業復旧件数
 - MiniStack差分に起因する学習阻害件数
+- AWS Management Consoleとの差異に起因する学習阻害件数
 
 ## 16. 主なリスクと対策
 
@@ -377,7 +382,8 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 | 利用者コードから社内/Internetへ通信 | Lab Outbound Default Deny、allowlist方式 |
 | Docker Engine権限悪用 | FargateとAdvanced Labを分離し、Advanced LabはEC2単位で使い捨てる |
 | 実AWS認証情報の窃取 | Lab Task Roleを原則付与せず、IMDSへの到達を遮断する |
-| AWS UI/商標上の問題 | 外観は独自デザインとし、正式展開前に社内法務/知財レビューを実施する |
+| AWS UI/商標・ブランド資産の利用範囲 | 実AWS Consoleの操作再現を要件としたうえで、正式展開前に社内法務/知財レビューを行い利用範囲を確定する |
+| AWS Console更新による画面差異 | 現行Consoleとの差分を定期確認し、学習上重要な変更へ追従する |
 | AWSコスト増大 | TTL、Quota、同時実行制限、Budgets、Advanced Labの必要時起動を適用する |
 
 ## 17. 企画上の決定事項
@@ -385,6 +391,7 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 本企画の初版では以下を前提とする。
 
 - Lab用途を課題・採点より優先する。
+- AWS Management Consoleの実画面・操作導線を再現対象とし、実操作を学べることをUIの第一要件とする。
 - 対象サービスを限定的な数サービスへ固定せず、可能な限り全AWSサービスへ拡張する。
 - 全サービスでL1を目標とし、L2/L3はサービス特性とエミュレータ能力に応じて提供する。
 - MiniStackを初期エンジンとするが、MiniStack固有仕様へUI/Control Planeを密結合させない。
