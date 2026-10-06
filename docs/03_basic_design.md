@@ -10,7 +10,7 @@
 
 本書は、AWS Internal Lab の初期リリースを実装するための基本設計を定義する。
 
-本システムは、利用者が AWS の各サービス相当のリソースを安全に試せる社内 Lab を提供する。初期フェーズでは課題・採点機能を対象外とし、各サービスの Console UI と Lab 実行基盤を優先する。
+本システムは、利用者が AWS の各サービス相当のリソースを安全に試せる社内 Lab を提供する。初期フェーズでは課題・採点機能を対象外とし、AWS Management Console の実操作を学べる各サービスの Console UI と Lab 実行基盤を優先する。
 
 ## 2. 設計原則
 
@@ -23,7 +23,8 @@
 7. UI と Emulator Engine は Adapter で分離し、MiniStack の fork や交換を可能にする。
 8. 管理データは実 AWS のマネージドサービスへ保存する。
 9. 機微データを保持しない設計を優先し、Audit も最小限のメタデータに限定する。
-10. AWS Management Console の外観コピーではなく、AWS の概念・情報構造・操作フローを学べる独自 UI とする。
+10. AWS Management Console の現行画面を UI 設計の基準とし、画面構成、ナビゲーション、設定項目、項目順、操作導線を可能な限り再現する。Lab で習得した手順を実 AWS Management Console でそのまま適用できることを優先する。
+11. Lab 固有の安全表示、Quota、TTL、Compatibility 情報は AWS Console 再現部分と区別して付加する。
 
 ## 3. システム構成
 
@@ -108,6 +109,8 @@ Lab Engine
 ```
 
 利用者の AWS API リクエストを無制限に透過Proxyする方式は初期段階では採用しない。Web Console から必要な操作を BFF API として明示的に実装し、許可操作・入力値・Auditを制御可能にする。
+
+Web Console の画面仕様は、対象時点の AWS Management Console をサービスごとに参照して定義する。Lab Engine の制約によって実 AWS と同一動作を実現できない場合でも、可能な限り画面遷移・入力項目・操作順序は AWS Management Console に合わせ、機能差は Compatibility 情報として表示する。
 
 ## 4.2 Lab Control Plane
 
@@ -302,6 +305,8 @@ MiniStackのMIT Licenseの著作権表示・許諾表示を保持する。
 | knownLimitations | 既知差異 |
 | dangerousFeatures | 無効化対象 |
 | lastVerifiedAt | 最終互換確認 |
+| consoleReference | UI設計時に参照したAWS Management Consoleの画面・確認日 |
+| consoleDifferences | 実AWS Consoleとの差異 |
 
 ### 6.2 UI 表示
 
@@ -315,6 +320,8 @@ Known differences from AWS:
 - EC2 instances do not run a real VM in Standard Lab.
 - CloudFront does not provide a real edge CDN.
 ```
+
+Compatibility表示は実AWS Consoleの操作領域を置き換えず、Lab固有情報として識別可能な形で付加する。
 
 ## 7. ネットワーク設計
 
@@ -429,6 +436,8 @@ Aurora PostgreSQLに以下を保持する。
 - knownLimitations
 - testedVersion
 - lastVerifiedAt
+- consoleReference
+- consoleDifferences
 
 ### QuotaPolicy
 
@@ -462,6 +471,7 @@ Platform S3には以下を保存可能とする。
 - License reports
 - Documentation assets
 - Compatibility test artifacts
+- Console UI comparison artifacts that contain no restricted data
 - Exportした非機微な診断情報
 
 利用者がLab内へ投入したS3 Object等を自動同期しない。
@@ -488,7 +498,7 @@ Lab Runtime内部のみで保持し、原則Lab終了時に破棄する。
 
 ## 10.2 UIガード
 
-Lab Header等に常時以下の趣旨を表示する。
+AWS Management Consoleの操作再現を阻害しない位置に、Lab固有の識別表示を常時行う。
 
 ```text
 TRAINING / LAB ENVIRONMENT
@@ -562,32 +572,58 @@ Lab quota exceeded: maximum 10 EC2 instances in this Lab.
 
 ## 13. UI基本設計
 
-## 13.1 共通レイアウト
+## 13.1 UI再現方針
+
+AWS Management Console の現行画面をサービスUIの正とする。
+
+画面設計時は各サービスについて実 AWS Management Console を確認し、以下を可能な限り一致させる。
+
+- グローバルナビゲーションとサービス内ナビゲーション
+- 一覧、詳細、作成、編集、削除の画面構成
+- タブ名称とタブ順
+- 設定セクション名称と表示順
+- フォーム項目、選択肢、既定値
+- 主要ボタンの意味と操作順序
+- リソース作成ウィザードのステップ
+- 確認画面・確認ダイアログ
+- リソース作成後に確認する画面への導線
+
+UI実装の評価基準は「独自UIとして分かりやすいか」ではなく、「Labで覚えた操作を実 AWS Management Console で再現できるか」を第一とする。
+
+Lab固有機能は、AWS Console操作との混同を避けるため識別可能な補助領域として追加する。
+
+- Training / Lab 表示
+- Lab TTL
+- Reset / Stop Lab
+- Quota
+- Compatibility / Known differences
+
+## 13.2 共通レイアウト
+
+共通レイアウトも AWS Management Console の利用体験を基準に設計する。ただし Lab 固有の状態・安全表示を追加する。
 
 ```text
 ┌────────────────────────────────────────────┐
 │ AWS Internal Lab   Region   Lab Status     │
 ├──────────────┬─────────────────────────────┤
-│ Services     │                             │
+│ AWS Consoleに対応したナビゲーション        │
 │              │ Service Console             │
-│ S3           │                             │
-│ EC2          │                             │
-│ IAM          │                             │
-│ RDS          │                             │
-│ ...          │                             │
+│              │                             │
 ├──────────────┴─────────────────────────────┤
 │ TRAINING ENVIRONMENT / expires in xx:xx    │
 └────────────────────────────────────────────┘
 ```
 
-## 13.2 主要画面
+実装時には上記概念図そのものではなく、対象時点の AWS Management Console の構造を参照して具体化する。
+
+## 13.3 主要画面
 
 初期の画面群は以下とする。
 
 1. Login / SSO callback
 2. Home / Lab Dashboard
 3. Start Lab
-4. Service Catalog
+4. AWS Management Console相当のService Catalog / Service navigation
 5. Service Console
 6. Lab Settings / Status
 7. Compatibility Information
@@ -595,22 +631,32 @@ Lab quota exceeded: maximum 10 EC2 instances in this Lab.
 9. Operator - Lab Detail
 10. Admin - Service Capability / Quota
 
-## 13.3 AWSらしさの範囲
+## 13.4 AWS Management Consoleとの差分管理
 
-再現するもの:
+実AWSとの差分は「独自デザイン」として積極的に作るのではなく、以下の場合に限定する。
 
-- サービス概念
-- リソース名称
-- 設定項目
-- リソース関係
-- 操作順序
+- Lab固有の安全表示・管理機能を追加する場合
+- MiniStack / Internal Emulator が機能を再現できない場合
+- セキュリティ上、実AWSと同じ操作を許可できない場合
+- 正式な法務・知財レビューで利用方法の調整が必要となった場合
 
-直接コピーしないもの:
+差分が学習操作に影響する場合は Service Compatibility Matrix に記録し、利用者から確認可能とする。
 
-- AWS UI配色
-- AWS独自アイコンセット
-- Consoleのピクセルレイアウト
-- AWSロゴの不適切な利用
+AWS Management Consoleの変更は定期的に確認し、学習上重要な画面変更へ追従する。
+
+## 13.5 UIリファレンス管理
+
+サービス画面ごとに最低限以下を管理する。
+
+- 対象AWSサービス
+- 参照したAWS Management Console画面
+- 確認日
+- 実装対象操作
+- 再現済み画面・導線
+- 意図的な差分
+- 未対応項目
+
+スクリーンショット等の保存・共有方法は社内ルールおよび法務・知財レビュー結果に従う。
 
 ## 14. API基本設計
 
@@ -682,6 +728,8 @@ MiniStack/AWS SDK由来のエラーは、機微情報を除去したうえで利
 
 内部endpoint、container ID、AWS account管理情報等をそのまま表示しない。
 
+可能な場合は AWS Management Console が表示するエラーコード・意味との対応を保ち、実AWSでのトラブルシュート学習を阻害しないことを優先する。
+
 ## 16. 監視設計
 
 ### Platform
@@ -742,7 +790,7 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 6. Advanced Workerのcontainer runtime権限
 7. IAM Role / IMDS経由で実AWS Credentialを取得できないこと
 8. SBOM / OSS License
-9. AWS商標・画面デザイン利用範囲
+9. AWS Management Consoleの画面・操作再現に伴う商標・著作物・ブランド資産の利用範囲
 10. Audit保存期間と閲覧権限
 11. Incident時の責任分界と利用規約
 
@@ -754,6 +802,7 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 - ECS/Fargate上での起動検証
 - Network隔離検証
 - S3/IAM/DynamoDB/SQS等の代表API検証
+- 代表サービスのAWS Management Console実画面・操作フロー調査
 - License/SBOM確認
 
 ### Phase 1: Standard Lab MVP
@@ -763,6 +812,7 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 - Service Catalog
 - Standard Lab
 - S3/IAM/DynamoDB/SQS等の複数Console
+- 実AWS Management Consoleとの主要操作導線比較
 - Quota
 - TTL
 - Audit
@@ -773,6 +823,7 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 - 対象サービスを順次拡大
 - Compatibility Matrix自動テスト
 - L1 Control Plane UI拡充
+- AWS Management Console変更追従
 
 ### Phase 3: Advanced Lab
 
@@ -837,10 +888,12 @@ aws-internal-lab/
 - Audit保存期間
 - DLP補助機能の初期導入有無
 - 外部通信を許可するサービスの扱い
+- AWS Management ConsoleのUI差分確認・更新頻度
+- AWSブランド資産・スクリーンショット等の利用範囲
 - UI実装Framework
 - IaCツール
 
-これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。
+これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。ただしAWS Management Consoleの実操作を学べること自体は未決事項ではなく、本システムの前提要件とする。
 
 ## 22. 参考
 
