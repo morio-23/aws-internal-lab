@@ -21,7 +21,8 @@
 - MiniStack の挙動差異や未対応機能は、サービス側の Adapter、社内拡張、必要に応じた fork で補完可能な構造とする。
 - UI は AWS Management Console の実画面を基準とし、画面構成、ナビゲーション、設定項目、項目順、操作導線、主要な操作単位を可能な限り再現する。利用者が本 Lab で習得した操作手順を実 AWS Management Console でそのまま適用できることを目標とする。
 - 操作・情報構造の再現と、AWSのブランド/trade dress/著作物の直接コピーは分離して扱う。
-- 利用者が扱う Lab データは原則使い捨てとし、永続保存を保証しない。
+- Lab Runtime は原則使い捨てとする。利用者が明示的に Suspend / Save を実行した場合のみ、再開に必要な Lab Snapshot を期限付きで永続保存できることとする。
+- Snapshot を保存していない Lab のデータ永続性は保証しない。
 
 ## 3. 用語
 
@@ -33,7 +34,10 @@
 | Control Plane | AWS リソースの作成、設定、参照、更新、削除等の管理 API |
 | Data Plane | 実際のコード実行、DB接続、データ処理等の実行処理 |
 | Lab Engine | AWS API 互換挙動を提供するバックエンド。初期候補は MiniStack |
-| Compatibility Matrix | AWS サービスごとの対応レベル、制約、差異を管理する一覧 |
+| Lab Snapshot | Lab Runtime を破棄した後でも再開できるよう、Lab Engine の状態と必要なデータを静的に保存したもの |
+| Suspend | Lab の状態を Snapshot として保存したうえで実行 Runtime を停止・破棄する操作 |
+| Resume | 保存済み Snapshot から新しい Runtime を起動し、Lab 状態を復元する操作 |
+| Compatibility Matrix | AWS サービスごとの対応レベル、制約、差異、Snapshot対応状況を管理する一覧 |
 | BFF | Browser から Lab Engine へのアクセスを仲介する Backend for Frontend / API 層 |
 
 ## 4. 利用者区分
@@ -43,13 +47,16 @@
 - 自身の Lab を開始できる。
 - 自身の Lab 内の AWS サービス画面を利用できる。
 - 自身の Lab をリセット・終了できる。
-- 他利用者の Lab は参照・操作できない。
+- 対応する Lab について Suspend / Resume できる。
+- 自身の Snapshot を削除できる。
+- 他利用者の Lab / Snapshot は参照・操作できない。
 
 ### 4.2 Operator
 
 - 稼働 Lab を参照できる。
 - Lab の状態、利用者、開始時刻、TTL、利用量を確認できる。
 - 問題のある Lab を強制終了できる。
+- Snapshot の有無、サイズ、期限等のメタデータを確認できる。
 - サービス提供可否やメンテナンス状態を確認できる。
 
 ### 4.3 Administrator
@@ -57,7 +64,7 @@
 Operator 権限に加え、以下を行える。
 
 - 利用可能サービスの制御
-- Quota / TTL 設定
+- Quota / TTL / Snapshot retention 設定
 - Compatibility Matrix 管理
 - システム設定変更
 - Audit 参照
@@ -93,6 +100,10 @@ Lab の作成、破棄、再作成を繰り返しても、実 AWS リソース�
 
 利用者が Lab 上で身につけた画面操作、設定項目の探し方、リソース作成手順を、実 AWS Management Console 上でも大きな読み替えなく適用できること。
 
+### BR-008 Lab 中断・再開
+
+利用者は学習途中の Lab Runtime を常時稼働させることなく、必要な状態を静的に保存して中断し、後日新しい Runtime 上で再開できること。
+
 ## 6. 機能要件
 
 ## 6.1 認証・認可
@@ -113,6 +124,10 @@ Learner / Operator / Administrator の権限を分離できること。
 
 利用者 Browser から Lab Engine の管理ポート/APIへ直接アクセスできないこと。
 
+### FR-AUTH-005 Snapshot 所有者チェック
+
+Snapshot の作成、参照、Resume、削除において、認証ユーザーと Snapshot owner の一致を検証すること。
+
 ## 6.2 Lab ライフサイクル
 
 ### FR-LAB-001 Lab 開始
@@ -125,6 +140,9 @@ Lab は最低限以下の状態を持つこと。
 
 - provisioning
 - ready
+- suspending
+- suspended
+- resuming
 - stopping
 - stopped
 - failed
@@ -136,15 +154,15 @@ Lab は最低限以下の状態を持つこと。
 
 ### FR-LAB-004 Lab 終了
 
-利用者は自身の Lab を明示的に終了できること。
+利用者は自身の Lab を明示的に終了できること。通常の終了では Snapshot を新規作成せず、既存 Snapshot を残すか削除するかは利用者または retention policy に従うこと。
 
 ### FR-LAB-005 TTL
 
-Lab は設定された TTL を超過した場合、自動停止または自動破棄されること。
+Lab Runtime は設定された TTL を超過した場合、自動停止または自動破棄されること。
 
 ### FR-LAB-006 Idle timeout
 
-一定時間操作がない Lab を自動停止できる構造を持つこと。
+一定時間操作がない Lab Runtime を自動 Suspend または自動停止できる構造を持つこと。自動 Suspend を利用するかは運用設定で選択可能とすること。
 
 ### FR-LAB-007 強制終了
 
@@ -153,6 +171,30 @@ Operator / Administrator が任意の Lab を強制終了できること。
 ### FR-LAB-008 同時 Lab 数制限
 
 利用者単位または全体で同時 Lab 数を制御できること。
+
+### FR-LAB-009 Suspend
+
+利用者は対応する Lab を Suspend できること。Suspend 時は Lab Engine の状態を整合した状態で保存した後、実行 Runtime を停止・破棄できること。
+
+### FR-LAB-010 Resume
+
+利用者は自身の有効な Snapshot から Lab を Resume できること。Resume 時は新しい Runtime を作成し、保存済み状態を復元した後に ready 状態へ遷移すること。
+
+### FR-LAB-011 Snapshot retention
+
+Snapshot には保存期限を持たせ、期限到来時に自動削除できること。保存期間は管理者が設定可能であること。
+
+### FR-LAB-012 Snapshot 削除
+
+利用者または管理者は不要な Snapshot を削除できること。
+
+### FR-LAB-013 Restore compatibility
+
+Snapshot には Lab Engine version、image digest、runtime type、region、サービス対応情報等、復元互換性を判断するための情報を保持すること。原則として作成時と同一または互換性確認済みの Lab Engine で復元すること。
+
+### FR-LAB-014 Snapshot 対応可否表示
+
+サービスまたは Runtime の特性により完全な Suspend / Resume を提供できない場合、Compatibility Matrix と UI で `full / partial / none` 等の対応状況を明示すること。
 
 ## 6.3 AWS サービス UI
 
@@ -168,6 +210,7 @@ Operator / Administrator が任意の Lab を強制終了できること。
 - 対応レベル L1/L2/L3
 - 既知の制約
 - 実 AWS の差異
+- Snapshot / Resume 対応状況
 
 ### FR-UI-003 AWS Management Console 操作再現
 
@@ -233,6 +276,10 @@ Lab ごとに一時ストレージ上限を設定できること。
 
 外部送信、host 権限、privileged 実行等を伴う機能を明示的に無効化または Advanced Lab に隔離できること。
 
+### FR-GUARD-007 Snapshot Quota
+
+利用者単位で Snapshot 数および総保存容量を制限できること。
+
 ## 6.6 ネットワーク
 
 ### FR-NET-001 Private 配置
@@ -249,7 +296,7 @@ Lab から Internet、社内業務ネットワーク、本番 AWS 資産への�
 
 ### FR-NET-004 必要通信 Allowlist
 
-ECR、CloudWatch Logs 等、Lab 実行上必要な通信は VPC Endpoint 等を優先して明示許可すること。
+ECR、CloudWatch Logs、Snapshot 保存用 S3 等、Lab 実行上必要な通信は VPC Endpoint 等を優先して明示許可すること。
 
 ### FR-NET-005 Advanced Lab 分離
 
@@ -257,13 +304,13 @@ Docker daemon 等を利用する Advanced Lab は Standard Lab と実行基盤�
 
 ## 6.7 データ保護
 
-### FR-DATA-001 Lab データ非永続
+### FR-DATA-001 Lab データ既定非永続
 
-利用者が Lab 内で作成したデータは、原則 Lab 終了時に破棄されること。
+通常の Lab Runtime 内データは原則一時データとし、Snapshot を明示作成していない状態では Runtime 終了時に破棄されること。
 
 ### FR-DATA-002 Platform Data 分離
 
-Lab 内データと、Aurora/S3 等に保存する Platform 管理データを分離すること。
+Lab Runtime 内データ、Snapshot payload、Aurora 等に保存する Platform 管理データを論理的・権限的に分離すること。
 
 ### FR-DATA-003 禁止データ表示
 
@@ -277,6 +324,8 @@ Lab 内データと、Aurora/S3 等に保存する Platform 管理データを�
 - Private Key
 - 本番 DB Dump
 
+Snapshot を利用する場合も上記禁止事項は変わらないことを明示すること。
+
 ### FR-DATA-004 Secret / Payload 非記録
 
 Audit Log に以下を原則保存しないこと。
@@ -289,7 +338,27 @@ Audit Log に以下を原則保存しないこと。
 
 ### FR-DATA-005 暗号化
 
-Platform が永続保存する管理データは AWS 標準の暗号化機能を利用すること。
+Platform が永続保存する管理データおよび Snapshot は AWS 標準の暗号化機能を利用すること。
+
+### FR-DATA-006 Snapshot 保存先
+
+Snapshot payload は専用の S3 Bucket 等、Platform 管理データと分離した保存先へ格納すること。Aurora には Snapshot 本体を保存せず、メタデータのみ保持すること。
+
+### FR-DATA-007 Snapshot アクセス制御
+
+Snapshot payload には利用者 Browser から直接アクセスさせず、復元処理を行う Platform / Lab Control Plane の最小権限 Role のみがアクセスできること。
+
+### FR-DATA-008 Snapshot KMS
+
+Snapshot は SSE-KMS 等で暗号化し、Snapshot 用 KMS Key と Key Policy を利用してアクセス主体を限定できること。
+
+### FR-DATA-009 Snapshot 削除保証
+
+利用者削除または retention 終了時に Snapshot payload と関連メタデータを削除すること。削除失敗は監視・再試行対象とすること。
+
+### FR-DATA-010 Snapshot 機微性
+
+禁止データ投入を前提としつつも、Snapshot には利用者が作成した S3 Object、Secret、Function code 等が含まれる可能性があるため、Snapshot 自体を機微データを含み得る保存物として保護すること。
 
 ## 6.8 Audit / 運用管理
 
@@ -315,11 +384,15 @@ Operator は稼働中 Lab を一覧表示できること。
 
 ### FR-AUDIT-004 利用量表示
 
-可能な範囲で CPU、Memory、Storage、Resource Count 等を確認できること。
+可能な範囲で CPU、Memory、Storage、Resource Count、Snapshot size 等を確認できること。
 
 ### FR-AUDIT-005 Kill Switch
 
 運用者は個別 Lab、および必要に応じて新規 Lab 起動全体を緊急停止できること。
+
+### FR-AUDIT-006 Snapshot Audit
+
+Snapshot の作成、Suspend、Resume、削除、期限切れ削除、復元失敗を Audit 対象とすること。ただし Snapshot payload 本体は Audit に記録しないこと。
 
 ## 6.9 MiniStack / Emulator 管理
 
@@ -342,6 +415,10 @@ Operator は稼働中 Lab を一覧表示できること。
 ### FR-EMU-005 SBOM / License
 
 MiniStack および依存パッケージの SBOM / License Scan を実施できること。
+
+### FR-EMU-006 State export / restore
+
+採用する Lab Engine について、Suspend / Resume に必要な状態の保存・復元方式を実装または検証できること。MiniStack の永続化機能を利用する場合は、`PERSIST_STATE` / `STATE_DIR`、S3 object bytes の `S3_PERSIST` / `S3_DATA_DIR` 等を利用し、Runtime のローカル保存領域から Snapshot Store へ退避・復元すること。
 
 ## 7. 非機能要件
 
@@ -371,6 +448,10 @@ Lab Engine、OS/Container Image、依存ライブラリの脆弱性を継続確�
 
 正式社内展開前に、少なくとも情報セキュリティ、法務/知財、社内規程担当のレビュー対象とすること。
 
+### NFR-SEC-007 Snapshot 分離
+
+Snapshot Store は一般の Platform asset 用 S3 と分離し、専用 Bucket / Prefix、Bucket Policy、KMS Key、Lifecycle を用いて保護すること。
+
 ## 7.2 可用性
 
 ### NFR-AVL-001 Control Plane
@@ -385,6 +466,10 @@ Web/API/管理 DB 等の Control Plane は、単一 Lab 障害に巻き込まれ
 
 Control Plane は ECS 等の標準機能で自動再起動できること。
 
+### NFR-AVL-004 Snapshot 復元失敗
+
+Snapshot からの Resume に失敗した場合、元 Snapshot を破壊せず、再試行または別 Runtime への復元を可能とすること。
+
 ## 7.3 性能
 
 ### NFR-PERF-001 Lab 起動時間
@@ -394,6 +479,10 @@ Control Plane は ECS 等の標準機能で自動再起動できること。
 ### NFR-PERF-002 UI 応答
 
 通常の一覧・設定画面は、Lab Engine の応答遅延を除き社内 Web アプリとして実用的なレスポンスを維持すること。
+
+### NFR-PERF-003 Suspend / Resume 時間
+
+Snapshot size、対象サービス、Runtime type と Suspend / Resume 所要時間を計測可能とし、運用上の上限値を後続設計で設定できること。
 
 ## 7.4 拡張性
 
@@ -409,6 +498,10 @@ MiniStack の変更・fork・別 Emulator 採用が UI 全面改修へ直結し�
 
 Standard Lab と Advanced Lab の実行基盤を独立して拡張できること。
 
+### NFR-EXT-004 Snapshot Provider
+
+Lab Snapshot の保存・復元を Lab Engine 固有実装へ密結合させず、Runtime / Provider ごとに Snapshot 実装を差し替えられる構造とすること。
+
 ## 7.5 保守性
 
 ### NFR-MNT-001 Infrastructure as Code
@@ -417,7 +510,7 @@ AWS 基盤構成を IaC で管理すること。
 
 ### NFR-MNT-002 Configuration as Code
 
-サービス対応レベル、Feature Flag、基本 Quota 等をコードまたはバージョン管理可能な設定として保持すること。
+サービス対応レベル、Feature Flag、基本 Quota、Snapshot retention 等をコードまたはバージョン管理可能な設定として保持すること。
 
 ### NFR-MNT-003 Compatibility Test
 
@@ -427,6 +520,10 @@ AWS 基盤構成を IaC で管理すること。
 
 AWS Management Console の学習上重要な画面変更を定期的に確認し、サービス画面ごとに実 AWS との UI 差分を管理・更新できること。
 
+### NFR-MNT-005 Snapshot compatibility test
+
+採用する Lab Engine version ごとに Snapshot 作成・復元の回帰テストを実施可能であること。
+
 ## 8. データ要件
 
 Platform 側で最低限保持するデータは以下とする。
@@ -435,13 +532,34 @@ Platform 側で最低限保持するデータは以下とする。
 - Role
 - LabSession
 - LabRuntime
+- LabSnapshot
 - ServiceCapability
 - CompatibilityNote
 - QuotaPolicy
 - AuditEvent
 - SystemSetting
 
-利用者が Lab 内へ投入した Object、DB データ、Secret、Lambda source 等は Platform 管理 DB の業務データとして保存しない。
+LabSnapshot の管理メタデータには最低限以下を保持する。
+
+- snapshotId
+- labSessionId
+- ownerUserId
+- status
+- runtimeType
+- engineVersion
+- engineImageDigest
+- region
+- snapshotFormatVersion
+- storageLocation
+- sizeBytes
+- checksum
+- createdAt
+- expiresAt
+- lastRestoredAt
+
+Snapshot payload 本体は Aurora に保存しない。
+
+利用者が Lab 内へ投入した Object、DB データ、Secret、Lambda source 等は、Snapshot を利用しない限り Platform の永続領域へ保存しない。Snapshot を利用する場合は専用 Snapshot Store に含まれ得るため、通常の Platform 管理データより強いアクセス制御を適用する。
 
 ## 9. 運用要件
 
@@ -450,6 +568,9 @@ Platform 側で最低限保持するデータは以下とする。
 - Lab Engine version を確認できること。
 - 新規 Lab 起動を停止するメンテナンスモードを持てること。
 - 個別 Lab を強制削除できること。
+- Snapshot の数、容量、期限、作成/復元失敗を確認できること。
+- 期限切れ Snapshot を自動削除できること。
+- Snapshot 保存容量を監視し、利用者単位・全体の Quota を運用できること。
 - Compatibility Matrix を更新できること。
 - AWS Management Console の変更を定期確認し、学習上重要な UI・操作導線の差分を追従する運用を定義すること。
 - 脆弱性情報や upstream 更新を定期確認する運用を定義すること。
@@ -461,11 +582,13 @@ Platform 側で最低限保持するデータは以下とする。
 利用開始時または常時確認可能な場所に以下を明示する。
 
 - 本サービスは非本番の学習・検証 Lab である。
-- データ永続性を保証しない。
+- Snapshot を保存しない限りデータ永続性を保証しない。
+- Snapshot は学習継続のための一時保存機能であり、業務データの保管場所として利用してはならない。
+- Snapshot には保存期限があり、期限到来時に削除される。
 - Lab は予告なくリセット・削除される場合がある。
 - 機密情報、個人情報、本番データ、本番資格情報を投入してはならない。
 - 本番システムや顧客サービス用途に使用してはならない。
-- 不適切利用が確認された場合、運営者が Lab を停止できる。
+- 不適切利用が確認された場合、運営者が Lab / Snapshot を停止・削除できる。
 - 本サービスはAWSが提供・承認・運営するサービスではないこと。
 
 ## 11. 初期リリース受入条件
@@ -473,24 +596,28 @@ Platform 側で最低限保持するデータは以下とする。
 初期リリースは以下をすべて満たした状態を最低条件とする。
 
 1. 社内認証済み利用者が Lab を開始できる。
-2. 利用者 A が利用者 B の Lab を参照・操作できない。
+2. 利用者 A が利用者 B の Lab / Snapshot を参照・操作できない。
 3. Standard Lab が Private Network 内に配置される。
 4. Browser から Lab Engine 管理 API へ直接到達できない。
 5. 少なくとも複数の AWS サービスについてリソース CRUD を実行できる。
 6. Lab リセットと終了が動作する。
 7. TTL による自動終了が動作する。
-8. Operator が Lab を強制終了できる。
-9. 操作 Audit が記録される。
-10. Audit に Secret / Object Body 等が記録されない。
-11. Lab から既存業務 AWS リソースへ汎用アクセスできない。
-12. Compatibility Matrix によりサービス対応状況を説明できる。
-13. 採用 MiniStack version / image digest が固定される。
-14. SBOM / License Scan の実施方法が確立される。
-15. 情報セキュリティ・法務/知財レビューに提示可能な構成・責任分界が文書化される。
-16. 初期提供対象の代表サービスについて、AWS Management Console の実画面と主要な操作導線を照合し、Lab で習得した操作手順を実 AWS でも適用できることが確認される。
-17. AWSロゴ、AWS固有の配色・フォント・グラフィック・製品アイコン、AWS ConsoleのHTML/CSS/JavaScript等を無断で製品資産へ直接コピーしていないことが確認される。
-18. AWS公式サービスとの誤認防止表示が実装される。
-19. `04_ip_guidelines.md` の知財チェック項目について法務・知財レビューに提示可能な状態であること。
+8. Standard Lab について Suspend → Runtime破棄 → Resume → 状態復元の一連動作が確認できる。
+9. Resume 後に、対応対象の主要リソース状態と S3 object data 等の永続対象データが復元される。
+10. Snapshot が専用保存先へ暗号化して保存され、他利用者から参照できない。
+11. Snapshot retention による自動削除が動作する。
+12. Operator が Lab を強制終了できる。
+13. 操作 Audit が記録される。
+14. Audit に Secret / Object Body 等が記録されない。
+15. Lab から既存業務 AWS リソースへ汎用アクセスできない。
+16. Compatibility Matrix によりサービス対応状況と Snapshot 対応状況を説明できる。
+17. 採用 MiniStack version / image digest が固定される。
+18. SBOM / License Scan の実施方法が確立される。
+19. 情報セキュリティ・法務/知財レビューに提示可能な構成・責任分界が文書化される。
+20. 初期提供対象の代表サービスについて、AWS Management Console の実画面と主要な操作導線を照合し、Lab で習得した操作手順を実 AWS でも適用できることが確認される。
+21. AWSロゴ、AWS固有の配色・フォント・グラフィック・製品アイコン、AWS ConsoleのHTML/CSS/JavaScript等を無断で製品資産へ直接コピーしていないことが確認される。
+22. AWS公式サービスとの誤認防止表示が実装される。
+23. `04_ip_guidelines.md` の知財チェック項目について法務・知財レビューに提示可能な状態であること。
 
 ## 12. 後続要件候補
 
@@ -503,8 +630,10 @@ Platform 側で最低限保持するデータは以下とする。
 - CLI Credentials 発行
 - Terraform / OpenTofu / CDK
 - 障害注入
-- Lab Template / Snapshot
+- Lab Template / Snapshot共有
 - 講師用一括 Lab 配布
+- Advanced Lab の完全 Snapshot / Resume
+- Snapshot 世代管理 / Clone
 - 実 AWS Sandbox 連携
 
 ## 13. 知財・ブランド要件
