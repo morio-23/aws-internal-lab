@@ -397,11 +397,13 @@ Standard Lab:
 Advanced Lab:
 
 - 業務ホストと同居しない
-- 可能な限り1 Lab = 1 EC2
-- Lab終了時EC2 terminate
-- Host IAM Role最小化
-- IMDS制御
-- Security Group分離
+- 共有EC2 Worker Poolを利用する
+- 1 Lab = 1 microVMをtenant boundaryとする
+- 異なるLabのDocker workloadをHost kernel上へ直接混在させない
+- Worker Host IAM Role最小化
+- guestからIMDS / Host management endpoint / Host filesystem / Host container runtimeへの到達を禁止
+- microVM間通信を禁止
+- Worker停止前にdrainを行い、active Labを巻き込まない
 
 AWSはFargateでTaskごとにハードウェア仮想化された分離を提供しており、強いTask分離を必要とする用途ではFargateが推奨されている。
 
@@ -464,7 +466,7 @@ Quota超過時は対象LabのみThrottle/Stopし、Platform全体へ波及させ
 
 ### 想定
 
-- Advanced EC2削除漏れ
+- Advanced Worker / microVM削除漏れ
 - Snapshot大量保存
 - Fargate大量起動
 - CloudWatch Logs肥大化
@@ -475,7 +477,7 @@ Quota超過時は対象LabのみThrottle/Stopし、Platform全体へ波及させ
 
 - TTL
 - Concurrent Lab Limit
-- Advanced Lab最大数
+- Advanced ACU / Worker数上限
 - Snapshot Lifecycle
 - Log retention
 - ECR Lifecycle
@@ -491,7 +493,7 @@ Quota超過時は対象LabのみThrottle/Stopし、Platform全体へ波及させ
 ### 対応
 
 - 新規Lab起動Kill Switch
-- Advanced Lab停止
+- Advanced Worker Pool / Advanced Lab停止
 - orphan cleanup
 
 ## 6.11 Snapshot破損 / Resume失敗
