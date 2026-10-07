@@ -490,7 +490,14 @@ Virtual Account IDは利用者識別情報を埋め込まず、Workspace存続�
 
 ### FR-VAWS-003 Region
 
-WorkspaceはVirtual Regionを保持し、物理RuntimeのAWS Regionとは分離して扱うこと。複数Virtual Regionへ拡張可能な構造を持つこと。
+初期提供するVirtual Regionは以下の2つとする。
+
+- Asia Pacific (Tokyo): `ap-northeast-1`
+- Asia Pacific (Osaka): `ap-northeast-3`
+
+defaultは東京とし、同一Workspaceで東京・大阪双方のRegional resourceを同時に保持できること。
+
+物理RuntimeのAWS Regionとは分離して扱い、初期リリースでは上記2Region以外を利用者が作成・選択できないこと。将来追加可能なデータ構造は維持すること。
 
 ### FR-VAWS-004 Global / Regional service
 
@@ -511,6 +518,22 @@ Lab内AWS SDKへ実AWS Credentialを渡さず、Virtual Accountに紐づくLab�
 ### FR-VAWS-008 実AWS誤到達防止
 
 Lab SDK endpointをLab Gatewayへ向け、実AWS public endpointへのegress制御と組み合わせて、Lab Credentialから実AWSへ誤到達しない構造とすること。
+
+### FR-VAWS-009 DR Learning
+
+東京・大阪の2 Virtual Regionを利用して、Backup and Restore、Pilot Light、Warm Standby、Active/Passive、Active/Active等のDR構成を学習できること。
+
+### FR-VAWS-010 Regional Fault Injection
+
+利用者は自身のWorkspace内だけでVirtual Region障害を模擬できること。Regional Fault Injectionは他WorkspaceおよびPlatform Control Planeへ影響しないこと。
+
+### FR-VAWS-011 Cross-Region Replication
+
+対応サービスでは東京・大阪間の非同期replication、replication lag、replication停止、failover/failbackを学習できる構造を持つこと。
+
+### FR-VAWS-012 Virtual DRとPlatform DRの分離
+
+Virtual RegionによるDR学習機能と、AWS Internal Labサービス自身の物理可用性・DRを明確に分離して設計・表示すること。
 
 ## 6.11 Provider Routing / Integration
 
@@ -781,6 +804,7 @@ Snapshot payload 本体は Aurora に保存しない。
 
 
 24. WorkspaceのVirtual Account ID / Region / ARN namespaceがSuspend/ResumeおよびStandard/Advanced切替後も維持される。
+24a. 東京 `ap-northeast-1` と大阪 `ap-northeast-3` に同一WorkspaceのRegional resourceを作成でき、東京障害を模擬した状態で大阪側へfailoverするDR演習が他利用者へ影響せず実施できる。
 25. Lab内SDKへ実AWS Credentialを渡さず、実AWS public endpointへ誤送信できないことを確認できる。
 26. Operation単位のProvider RoutingでMiniStack / Internal / Denyを切り替えられる。
 27. 同じIdempotency KeyによるLifecycle API再送で二重Runtime/Snapshotを作成しない。
