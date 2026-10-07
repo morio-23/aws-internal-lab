@@ -35,6 +35,7 @@ export type LabGatewayRequest = {
   virtualRegion: string;
   serviceCode: string;
   operation: string;
+  payload?: unknown;
   accessKeyId: string;
   secretAccessKey: string;
   correlationId: string;
