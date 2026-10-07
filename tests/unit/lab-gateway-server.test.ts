@@ -260,3 +260,139 @@ test("platform token for another workspace is rejected", async () => {
     );
   }
 });
+
+
+test("platform quiesce drains in-flight work, blocks new invokes, and can be rolled back", async () => {
+  const keys = generateRuntimeTokenKeyPair();
+  const virtualAccountId = "012345678901";
+  const sessionId = "session-quiesce";
+  const binding: LabBinding = {
+    workspaceId: "workspace-quiesce",
+    sessionId,
+    virtualAccountId,
+    enabledRegions: ["ap-northeast-1"],
+    credential: createLabCredential({ virtualAccountId, sessionId }),
+  };
+  const registry = createCapabilityRegistry([
+    {
+      serviceCode: "demo",
+      operation: "Mutate",
+      provider: "internal",
+      runtimeRequirement: "standard",
+      enabled: true,
+    },
+  ]);
+
+  let releaseProvider!: () => void;
+  let providerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    releaseProvider = resolve;
+  });
+
+  const server = createLabGatewayServer({
+    binding,
+    registry,
+    platformPublicKeyPem: keys.publicKeyPem,
+    quiesceTimeoutMs: 1_000,
+    providers: [
+      {
+        kind: "internal",
+        async invoke() {
+          providerStarted();
+          await blocked;
+          return { mutated: true };
+        },
+      },
+    ],
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("failed to bind test server");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const token = signRuntimeToken({
+    privateKeyPem: keys.privateKeyPem,
+    workspaceId: binding.workspaceId,
+    sessionId,
+    virtualAccountId,
+    ttlSeconds: 60,
+  });
+  const invokeBody = JSON.stringify({
+    virtualRegion: "ap-northeast-1",
+    serviceCode: "demo",
+    operation: "Mutate",
+    correlationId: "corr-quiesce",
+  });
+
+  try {
+    const inFlight = fetch(`${baseUrl}/invoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer " + token,
+      },
+      body: invokeBody,
+    });
+    await started;
+
+    const quiesce = fetch(`${baseUrl}/admin/quiesce`, {
+      method: "POST",
+      headers: { authorization: "Bearer " + token },
+    });
+    const early = await Promise.race([
+      quiesce.then(() => "completed"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 20)),
+    ]);
+    assert.equal(early, "pending");
+
+    releaseProvider();
+    assert.equal((await inFlight).status, 200);
+    const quiesced = await quiesce;
+    assert.equal(quiesced.status, 200);
+    assert.deepEqual(await quiesced.json(), {
+      status: "quiesced",
+      activeInvocations: 0,
+    });
+
+    const blockedInvoke = await fetch(`${baseUrl}/invoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer " + token,
+      },
+      body: invokeBody,
+    });
+    assert.equal(blockedInvoke.status, 409);
+    assert.deepEqual(await blockedInvoke.json(), {
+      error: { code: "RUNTIME_QUIESCING" },
+    });
+
+    const unquiesce = await fetch(`${baseUrl}/admin/unquiesce`, {
+      method: "POST",
+      headers: { authorization: "Bearer " + token },
+    });
+    assert.equal(unquiesce.status, 200);
+
+    const after = await fetch(`${baseUrl}/invoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer " + token,
+      },
+      body: invokeBody,
+    });
+    assert.equal(after.status, 200);
+  } finally {
+    releaseProvider();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
