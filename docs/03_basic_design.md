@@ -1154,7 +1154,7 @@ aws-internal-lab/
 │  ├─ 02_requirements.md
 │  ├─ 03_basic_design.md
 │  ├─ 04_ip_guidelines.md
-│  ├─ service-compatibility.md       # 後続
+│  ├─ service-compatibility.md       # AWS全サービス互換性マトリクス
 │  └─ adr/                           # 後続
 │
 ├─ apps/
