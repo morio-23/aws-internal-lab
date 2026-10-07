@@ -29,11 +29,91 @@ export function createLabGatewayServer(input: {
   providers: readonly ProviderAdapter[];
   registry?: CapabilityRegistry;
   platformPublicKeyPem?: string;
+  quiesceTimeoutMs?: number;
 }) {
+  let quiescing = false;
+  let activeInvocations = 0;
+  const drainWaiters = new Set<() => void>();
+
+  function verifyPlatformRequest(request: IncomingMessage): void {
+    if (!input.platformPublicKeyPem) {
+      throw new Error("INVALID_RUNTIME_TOKEN:PLATFORM_KEY_UNAVAILABLE");
+    }
+    const authorization = request.headers.authorization;
+    if (!authorization?.startsWith("Bearer ")) {
+      throw new Error("INVALID_RUNTIME_TOKEN:MISSING");
+    }
+    verifyRuntimeToken({
+      token: authorization.slice("Bearer ".length),
+      publicKeyPem: input.platformPublicKeyPem,
+      expectedWorkspaceId: input.binding.workspaceId,
+      expectedSessionId: input.binding.sessionId,
+      expectedVirtualAccountId: input.binding.virtualAccountId,
+    });
+  }
+
+  function invocationFinished(): void {
+    activeInvocations -= 1;
+    if (activeInvocations === 0) {
+      for (const resolve of drainWaiters) resolve();
+      drainWaiters.clear();
+    }
+  }
+
+  async function waitForDrain(): Promise<boolean> {
+    if (activeInvocations === 0) return true;
+    const timeoutMs = input.quiesceTimeoutMs ?? 30_000;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        drainWaiters.delete(onDrain);
+        resolve(value);
+      };
+      const onDrain = () => finish(true);
+      drainWaiters.add(onDrain);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      timer.unref?.();
+    });
+  }
+
   return createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/healthz") {
-        json(response, 200, { status: "ok" });
+        json(response, 200, {
+          status: "ok",
+          quiescing,
+          activeInvocations,
+        });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/quiesce") {
+        verifyPlatformRequest(request);
+        quiescing = true;
+        const drained = await waitForDrain();
+        if (!drained) {
+          json(response, 503, {
+            error: { code: "QUIESCE_TIMEOUT" },
+            activeInvocations,
+          });
+          return;
+        }
+        json(response, 200, {
+          status: "quiesced",
+          activeInvocations,
+        });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/unquiesce") {
+        verifyPlatformRequest(request);
+        quiescing = false;
+        json(response, 200, {
+          status: "ready",
+          activeInvocations,
+        });
         return;
       }
 
@@ -42,60 +122,70 @@ export function createLabGatewayServer(input: {
         return;
       }
 
-      const rawBody = (await readJsonBody(request)) as Partial<LabGatewayRequest>;
-      const authorization = request.headers.authorization;
-      let body: LabGatewayRequest;
-
-      if (
-        input.platformPublicKeyPem &&
-        authorization?.startsWith("Bearer ")
-      ) {
-        const token = authorization.slice("Bearer ".length);
-        verifyRuntimeToken({
-          token,
-          publicKeyPem: input.platformPublicKeyPem,
-          expectedWorkspaceId: input.binding.workspaceId,
-          expectedSessionId: input.binding.sessionId,
-          expectedVirtualAccountId: input.binding.virtualAccountId,
-        });
-
-        if (
-          typeof rawBody.virtualRegion !== "string" ||
-          typeof rawBody.serviceCode !== "string" ||
-          typeof rawBody.operation !== "string" ||
-          typeof rawBody.correlationId !== "string"
-        ) {
-          json(response, 400, { error: { code: "INVALID_REQUEST" } });
-          return;
-        }
-
-        body = {
-          workspaceId: input.binding.workspaceId,
-          sessionId: input.binding.sessionId,
-          virtualAccountId: input.binding.virtualAccountId,
-          virtualRegion: rawBody.virtualRegion,
-          serviceCode: rawBody.serviceCode,
-          operation: rawBody.operation,
-          ...(rawBody.payload === undefined ? {} : { payload: rawBody.payload }),
-          accessKeyId: input.binding.credential.accessKeyId,
-          secretAccessKey: input.binding.credential.secretAccessKey,
-          correlationId: rawBody.correlationId,
-        };
-      } else {
-        body = rawBody as LabGatewayRequest;
+      if (quiescing) {
+        json(response, 409, { error: { code: "RUNTIME_QUIESCING" } });
+        return;
       }
 
-      const result = await dispatchLabRequest({
-        binding: input.binding,
-        request: body,
-        ...(input.registry ? { registry: input.registry } : {}),
-        providers: input.providers,
-      });
+      activeInvocations += 1;
+      try {
+        const rawBody = (await readJsonBody(request)) as Partial<LabGatewayRequest>;
+        const authorization = request.headers.authorization;
+        let body: LabGatewayRequest;
 
-      json(response, 200, {
-        correlationId: body.correlationId,
-        result,
-      });
+        if (
+          input.platformPublicKeyPem &&
+          authorization?.startsWith("Bearer ")
+        ) {
+          const token = authorization.slice("Bearer ".length);
+          verifyRuntimeToken({
+            token,
+            publicKeyPem: input.platformPublicKeyPem,
+            expectedWorkspaceId: input.binding.workspaceId,
+            expectedSessionId: input.binding.sessionId,
+            expectedVirtualAccountId: input.binding.virtualAccountId,
+          });
+
+          if (
+            typeof rawBody.virtualRegion !== "string" ||
+            typeof rawBody.serviceCode !== "string" ||
+            typeof rawBody.operation !== "string" ||
+            typeof rawBody.correlationId !== "string"
+          ) {
+            json(response, 400, { error: { code: "INVALID_REQUEST" } });
+            return;
+          }
+
+          body = {
+            workspaceId: input.binding.workspaceId,
+            sessionId: input.binding.sessionId,
+            virtualAccountId: input.binding.virtualAccountId,
+            virtualRegion: rawBody.virtualRegion,
+            serviceCode: rawBody.serviceCode,
+            operation: rawBody.operation,
+            ...(rawBody.payload === undefined ? {} : { payload: rawBody.payload }),
+            accessKeyId: input.binding.credential.accessKeyId,
+            secretAccessKey: input.binding.credential.secretAccessKey,
+            correlationId: rawBody.correlationId,
+          };
+        } else {
+          body = rawBody as LabGatewayRequest;
+        }
+
+        const result = await dispatchLabRequest({
+          binding: input.binding,
+          request: body,
+          ...(input.registry ? { registry: input.registry } : {}),
+          providers: input.providers,
+        });
+
+        json(response, 200, {
+          correlationId: body.correlationId,
+          result,
+        });
+      } finally {
+        invocationFinished();
+      }
     } catch (error) {
       if (error instanceof LabGatewayError) {
         const status =
