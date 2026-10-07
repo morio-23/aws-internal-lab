@@ -1,5 +1,6 @@
 import {
   CfnOutput,
+  CfnParameter,
   RemovalPolicy,
   Stack,
   type StackProps,
@@ -14,6 +15,12 @@ import { Construct } from "constructs";
 export class RuntimeStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
     super(scope, id, props);
+
+    const platformAccountId = new CfnParameter(this, "PlatformAccountId", {
+      type: "String",
+      description: "AWS account ID hosting the Platform Control Plane",
+      allowedPattern: "^[0-9]{12}$",
+    });
 
     const vpc = new ec2.Vpc(this, "RuntimeVpc", {
       ipAddresses: ec2.IpAddresses.cidr("10.30.0.0/16"),
@@ -171,8 +178,24 @@ export class RuntimeStack extends Stack {
       }),
     );
 
+    const orchestratorRole = new iam.Role(this, "RuntimeOrchestratorRole", {
+      assumedBy: new iam.AccountPrincipal(platformAccountId.valueAsString),
+      description:
+        "Cross-account role used by the Platform Control Plane to manage Standard Runtime tasks",
+    });
+    taskDefinition.grantRun(orchestratorRole);
+    orchestratorRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ecs:StopTask", "ecs:DescribeTasks"],
+        resources: ["*"],
+      }),
+    );
+
     new CfnOutput(this, "RuntimeVpcId", { value: vpc.vpcId });
     new CfnOutput(this, "StandardClusterArn", { value: cluster.clusterArn });
+    new CfnOutput(this, "RuntimeOrchestratorRoleArn", {
+      value: orchestratorRole.roleArn,
+    });
     new CfnOutput(this, "StandardTaskDefinitionArn", {
       value: taskDefinition.taskDefinitionArn,
     });
