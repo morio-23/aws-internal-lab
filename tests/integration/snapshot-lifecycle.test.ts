@@ -92,6 +92,10 @@ class SnapshotFakeManager implements StandardSnapshotManager {
   async deleteSnapshot(snapshotId: string) {
     this.deletedSnapshots.push(snapshotId);
   }
+
+  async listManagedVolumes() {
+    return [];
+  }
 }
 
 class MemoryManifestStore implements SnapshotManifestStore {
