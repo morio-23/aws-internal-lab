@@ -43,10 +43,10 @@ AWSの製品ページにはサービス以外のプログラム、ツール、De
 | Runtime | 方針 |
 | --- | --- |
 | Standard | ECS/Fargate等。Docker socket/privilegedを利用せず、metadata/control-plane/安全なfunctional emulatorを提供 |
-| Hybrid | L1/L2はStandard、L3 data planeのみDedicated EC2等のAdvanced Runtimeへ分離 |
+| Hybrid | 通常はStandard。L3が必要なLabはSnapshotを介して共有EC2 Worker Pool上のLab専用microVMへ昇格 |
 | Reference | emulator runtimeなし |
 
-Advanced Runtimeは原則として共有業務基盤と分離し、必要に応じて `1 Advanced Lab = 1 EC2` とする。
+Advanced Runtimeは共有EC2 Worker Pool上に配置する。ただしtenant境界はEC2 HostではなくLab専用microVMとし、`1 Advanced Lab = 1 microVM` とする。異なるLabのDocker workloadをHost kernel上へ直接混在させない。
 
 ## 5. MiniStack列の意味
 
