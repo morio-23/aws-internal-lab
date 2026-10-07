@@ -30,8 +30,8 @@
 | --- | --- |
 | Lab | 利用者ごとに払い出される独立した AWS エミュレーション環境 |
 | LabWorkspace | Suspend/ResumeやRuntime切替を跨いで継続する論理AWS環境。Virtual Account/Region/ARN namespaceの正本 |
-| Standard Lab | ECS/Fargate 等、Docker daemon を必要としない標準実行環境 |
-| Advanced Lab | RDS/ECS/EKS 等、追加コンテナ実行が必要なサービス向け専用実行環境 |
+| Standard Lab | ECS/Fargate 上で実行する標準Runtime。Docker daemonを必要としないL1/L2を中心に提供 |
+| Advanced Lab | 共有EC2 Worker Pool上のLab専用microVMで実行するRuntime。Docker/KVM等を必要とするL3を提供 |
 | Control Plane | AWS リソースの作成、設定、参照、更新、削除等の管理 API |
 | Data Plane | 実際のコード実行、DB接続、データ処理等の実行処理 |
 | Lab Engine | AWS API 互換挙動を提供するバックエンド。初期候補は MiniStack |
@@ -122,11 +122,11 @@ Lab の作成、破棄、再作成を繰り返しても、実 AWS リソース�
 
 ### FR-AUTH-002 ロール管理
 
-Learner / Operator / Administrator の権限を分離できること。
+Learner / Operator / Administrator / SecurityAuditor の権限を分離できること。
 
 ### FR-AUTH-003 Lab 所有者チェック
 
-すべての利用者向け Lab API で、認証ユーザーと Lab owner の一致を検証すること。
+すべての利用者向けWorkspace/Lab APIで、認証ユーザーとWorkspace ownerの一致を検証すること。
 
 ### FR-AUTH-004 Lab Engine 直接アクセス禁止
 
@@ -786,6 +786,7 @@ Snapshot payload 本体は Aurora に保存しない。
 27. 同じIdempotency KeyによるLifecycle API再送で二重Runtime/Snapshotを作成しない。
 28. Learner / Operator / Administrator / SecurityAuditorの権限分離とowner checkが確認できる。
 29. Correlation IDにより利用者操作からProvider/Auditまで追跡でき、Payload本文は記録されない。
+
 ## 12. 後続要件候補
 
 初期 Lab 基盤確立後、別要件として以下を検討する。
