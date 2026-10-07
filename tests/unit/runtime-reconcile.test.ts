@@ -46,6 +46,7 @@ test("orphan volume cleanup deletes only aged available managed volumes absent f
         { volumeId: "vol-orphan", createTime: new Date("2026-10-07T09:00:00Z") },
       ];
     },
+    async listManagedSnapshots() { return []; },
   };
 
   const result = await cleanupOrphanStandardVolumes({
