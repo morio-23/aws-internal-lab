@@ -562,7 +562,7 @@ Virtual AWS Account ID、Region、ARN namespace、LabWorkspace IDは変更しな
 
 同一WorkspaceでStandard FargateとAdvanced microVMを同時Activeにはしない。
 
-Advanced → Standardへの自動降格は初期リリースでは行わない。
+Advanced → Standardへの自動降格は利用中には行わない。Advanced必須resource/workloadが0で `standardEligible=true` の場合、次回Suspend/Resume等の安全な境界でFargateへ復帰する。
 
 ### 4.4.11 Network Isolation
 
