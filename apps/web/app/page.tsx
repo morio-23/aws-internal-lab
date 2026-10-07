@@ -1,16 +1,16 @@
-import { RegionSelector } from "./region-selector";
+import { ServiceConsole } from "./service-console";
 
 export default function HomePage() {
   return (
-    <main>
-      <p>社内学習用Lab</p>
-      <h1>AWS Internal Lab</h1>
-      <p>AWS Management Consoleの操作学習を目的とした社内Prototypeです。</p>
-
-      <section aria-labelledby="workspace-heading">
-        <h2 id="workspace-heading">Lab Workspace</h2>
-        <RegionSelector />
-      </section>
+    <main style={{ padding: "1.5rem" }}>
+      <header>
+        <p>AWS Internal Lab / 社内学習用Prototype</p>
+        <p>
+          AWS Management Consoleの操作導線を学習するための社内Labです。
+          AWS公式サービスではありません。
+        </p>
+      </header>
+      <ServiceConsole />
     </main>
   );
 }
