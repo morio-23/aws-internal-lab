@@ -42,6 +42,7 @@ test("outbox and worker cycle provision then stop the API-created runtime", asyn
     async deleteVolume() {},
     async deleteSnapshot() {},
     async listManagedVolumes() { return []; },
+    async listManagedSnapshots() { return []; },
   };
   const manifestStore: SnapshotManifestStore = {
     async putManifest() { return { key: "unused", sha256: "unused" }; },
