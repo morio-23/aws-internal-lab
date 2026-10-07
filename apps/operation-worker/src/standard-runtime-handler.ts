@@ -28,6 +28,7 @@ import type {
   ManagedStandardTask,
   StandardRuntimeProvisioner,
 } from "../../../packages/runtime-control/src/standard-runtime.js";
+import type { RuntimeGatewayAdmin } from "./runtime-gateway-admin.js";
 
 function errorCode(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -169,6 +170,7 @@ export async function executeStandardRuntimeOperation(input: {
   provisioner: StandardRuntimeProvisioner;
   snapshotManager?: StandardSnapshotManager;
   manifestStore?: SnapshotManifestStore;
+  gatewayAdmin?: RuntimeGatewayAdmin;
   now?: () => Date;
 }): Promise<void> {
   const operation = await getLifecycleOperation({
@@ -266,7 +268,7 @@ export async function executeStandardRuntimeOperation(input: {
   }
 
   if (operation.operationType === "suspend") {
-    if (!input.snapshotManager || !input.manifestStore) {
+    if (!input.snapshotManager || !input.manifestStore || !input.gatewayAdmin) {
       const error = new Error("SNAPSHOT_DEPENDENCY_UNAVAILABLE");
       await setOperationStatus({
         databaseUrl: input.databaseUrl,
@@ -285,7 +287,8 @@ export async function executeStandardRuntimeOperation(input: {
       !runtime ||
       runtime.runtimeType !== "standard" ||
       !runtime.providerRef ||
-      !runtime.stateVolumeRef
+      !runtime.stateVolumeRef ||
+      !runtime.privateEndpoint
     ) {
       const error = new Error("STANDARD_RUNTIME_NOT_SNAPSHOT_READY");
       await setOperationStatus({
@@ -303,8 +306,18 @@ export async function executeStandardRuntimeOperation(input: {
       sourceSessionId: runtime.sessionId,
     });
     let taskStopped = false;
+    let gatewayQuiesced = false;
+    const gatewayIdentity = {
+      endpoint: runtime.privateEndpoint,
+      workspaceId: operation.workspaceId,
+      sessionId: runtime.sessionId,
+      virtualAccountId: runtime.virtualAccountId,
+    };
 
     try {
+      await input.gatewayAdmin.quiesce(gatewayIdentity);
+      gatewayQuiesced = true;
+
       await input.provisioner.stop(
         runtime.providerRef,
         "Workspace Standard Runtime suspend",
@@ -366,6 +379,14 @@ export async function executeStandardRuntimeOperation(input: {
         snapshotId: snapshot.id,
         errorCode: errorCode(error),
       });
+
+      if (!taskStopped && gatewayQuiesced) {
+        try {
+          await input.gatewayAdmin.unquiesce(gatewayIdentity);
+        } catch {
+          // Fail closed: the runtime remains quiesced and operator/reconciler can recover it.
+        }
+      }
 
       if (taskStopped) {
         await finishStandardRuntime({
