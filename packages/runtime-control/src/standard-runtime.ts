@@ -6,7 +6,6 @@ import {
   type DescribeTasksCommandOutput,
   type ECSClientConfig,
   type RunTaskCommandOutput,
-  type StopTaskCommandOutput,
 } from "@aws-sdk/client-ecs";
 
 export type StandardRuntimeIdentity = {
