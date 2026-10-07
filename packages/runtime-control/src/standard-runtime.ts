@@ -43,6 +43,7 @@ export type EcsStandardRuntimeProvisionerConfig = {
   taskDefinitionArn: string;
   subnetIds: readonly string[];
   securityGroupIds: readonly string[];
+  platformPublicKeyPem?: string;
   client?: EcsSender;
   clientConfig?: ECSClientConfig;
 };
@@ -59,6 +60,7 @@ export class EcsStandardRuntimeProvisioner
   readonly #taskDefinitionArn: string;
   readonly #subnetIds: readonly string[];
   readonly #securityGroupIds: readonly string[];
+  readonly #platformPublicKeyPem?: string;
 
   constructor(config: EcsStandardRuntimeProvisionerConfig) {
     if (config.subnetIds.length < 2) {
@@ -84,6 +86,7 @@ export class EcsStandardRuntimeProvisioner
     this.#taskDefinitionArn = config.taskDefinitionArn;
     this.#subnetIds = config.subnetIds;
     this.#securityGroupIds = config.securityGroupIds;
+    this.#platformPublicKeyPem = config.platformPublicKeyPem;
   }
 
   async start(
@@ -123,6 +126,14 @@ export class EcsStandardRuntimeProvisioner
                   "LAB_ENABLED_REGIONS",
                   JSON.stringify(identity.enabledRegions),
                 ),
+                ...(this.#platformPublicKeyPem
+                  ? [
+                      env(
+                        "PLATFORM_RUNTIME_PUBLIC_KEY_B64",
+                        Buffer.from(this.#platformPublicKeyPem).toString("base64"),
+                      ),
+                    ]
+                  : []),
               ],
             },
             {
