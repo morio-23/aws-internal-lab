@@ -17,6 +17,13 @@ export type ManagedStandardVolume = {
   createTime: Date;
 };
 
+export type ManagedStandardSnapshot = {
+  snapshotId: string;
+  labSnapshotId: string;
+  startTime: Date;
+  state: string;
+};
+
 export interface StandardSnapshotManager {
   createSnapshot(input: {
     volumeId: string;
@@ -26,6 +33,7 @@ export interface StandardSnapshotManager {
   deleteVolume(volumeId: string): Promise<void>;
   deleteSnapshot(snapshotId: string): Promise<void>;
   listManagedVolumes(): Promise<ManagedStandardVolume[]>;
+  listManagedSnapshots(): Promise<ManagedStandardSnapshot[]>;
 }
 
 type Ec2Sender = {
@@ -159,4 +167,47 @@ export class AwsStandardSnapshotManager implements StandardSnapshotManager {
 
     return volumes;
   }
+  async listManagedSnapshots(): Promise<ManagedStandardSnapshot[]> {
+    const snapshots: ManagedStandardSnapshot[] = [];
+    let nextToken: string | undefined;
+
+    do {
+      const result = (await this.#client.send(
+        new DescribeSnapshotsCommand({
+          OwnerIds: ["self"],
+          Filters: [
+            { Name: "tag:ManagedBy", Values: ["aws-internal-lab"] },
+          ],
+          ...(nextToken ? { NextToken: nextToken } : {}),
+        }),
+      )) as {
+        Snapshots?: Array<{
+          SnapshotId?: string;
+          StartTime?: Date;
+          State?: string;
+          Tags?: Array<{ Key?: string; Value?: string }>;
+        }>;
+        NextToken?: string;
+      };
+
+      for (const snapshot of result.Snapshots ?? []) {
+        const labSnapshotId = snapshot.Tags?.find(
+          (tag) => tag.Key === "LabSnapshotId",
+        )?.Value;
+        if (!snapshot.SnapshotId || !snapshot.StartTime || !labSnapshotId) {
+          continue;
+        }
+        snapshots.push({
+          snapshotId: snapshot.SnapshotId,
+          labSnapshotId,
+          startTime: snapshot.StartTime,
+          state: snapshot.State ?? "unknown",
+        });
+      }
+      nextToken = result.NextToken;
+    } while (nextToken);
+
+    return snapshots;
+  }
+
 }
