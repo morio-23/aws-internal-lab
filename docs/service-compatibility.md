@@ -405,6 +405,19 @@ Regional serviceについては、実AWSのRegion Availabilityに合わせて `s
 
 実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を管理し、**TargetとCurrent implementationを分離**する。`scope` で global / regional を管理し、regional serviceは `supportedVirtualRegions` で東京 `ap-northeast-1` / 大阪 `ap-northeast-3` の対応を管理する。`replicationSupport` は none / configuration-only / asynchronous-data / synchronous-simulated を取り、`regionalFaultInjection` と合わせてDR教材可否を表す。`providerRoutes` はOperation単位で MiniStack / Internal / Reference / Deny を指定する。Advanced対応Operationでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` を管理し、Worker Fleet PlannerのACU計算に利用する。Cross-provider連携では `integrationOwner` を持ち、MiniStack native integrationとIntegration Bridgeの二重実行を防ぐ。
 
+## 10.1 Phase 0 Current Implementation
+
+Target Layerとは別に、実装済みレベルを以下で管理する。
+
+| Service | implementedLevel | Tested Operations | Virtual Regions | Evidence / Notes |
+| --- | --- | --- | --- | --- |
+| Amazon S3 | L2 subset | CreateBucket / ListBuckets / PutObject / GetObject / DeleteObject / DeleteBucket | Tokyo / Osaka | Lab Gateway → AWS SDK → MiniStackの実integration testをCIで実施。Object data planeを確認。 |
+| DynamoDB | L2 subset | CreateTable / ListTables / PutItem / GetItem / DeleteItem / DeleteTable | Tokyo / Osaka | Tokyo/Osaka state separationおよびVirtual Account分離を実MiniStackで確認。 |
+| Amazon SQS | L2 subset | CreateQueue / ListQueues / SendMessage / ReceiveMessage / DeleteMessage / DeleteQueue | Tokyo / Osaka | Osakaでqueue/message data planeを実MiniStackで確認。 |
+
+`L2 subset` は対象サービスのL2全機能完成を意味しない。上表のTested Operationsまでを現在の実装済み範囲とし、operation coverage拡大に伴って更新する。
+
+Phase 0ではBrowserからRuntimeへ直接接続せず、Web同一Origin → Control Plane/BFF → runtime-bound署名token → Private Lab Gateway → MiniStackという経路を正とする。
 ## 11. 更新ルール
 
 以下のいずれかで本表を更新する。
