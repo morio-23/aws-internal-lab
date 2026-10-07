@@ -19,7 +19,7 @@
 3. Snapshot を保存しない通常終了では Lab 内データの永続保存を前提としない。
 4. MiniStack を利用するが、MiniStack 自体をセキュリティ境界として信用しない。
 5. Browser から Lab Engine を直接公開しない。
-6. Standard Lab と Advanced Lab を分離する。
+6. Standard Runtime と Advanced Runtime を分離する。StandardはECS/Fargate、Advancedは共有EC2 Worker Pool上のLab単位microVMを用いる。
 7. AWS サービスごとの対応差異と Snapshot 対応状況を Compatibility Matrix で明示する。
 8. UI と Emulator Engine は Adapter で分離し、MiniStack の fork や交換を可能にする。
 9. 管理データは実 AWS のマネージドサービスへ保存する。
@@ -43,34 +43,41 @@
                  │      ECS Service    │
                  └───────┬─────┬───────┘
                          │     │
-                   SQL   │     │ AWS SDK / Internal API
+                   SQL   │     │ Runtime Control
                          │     │
               ┌──────────▼─┐   │
               │ Aurora PG  │   │
               │ metadata   │   │
               └──────┬─────┘   │
                      │         │
-            Snapshot metadata  │
-                     │         │
               ┌──────▼──────┐  │
               │ Snapshot S3 │  │
               │ + SSE-KMS   │  │
               └─────────────┘  │
                                │
-                        ┌──────▼──────┐
-                        │ Lab Control │
-                        │   Plane     │
-                        └──────┬──────┘
+                        ┌──────▼───────────┐
+                        │ Lab Control Plane│
+                        └──────┬───────────┘
                                │
               ┌────────────────┴────────────────┐
               │                                 │
               ▼                                 ▼
-      Standard Lab                         Advanced Lab
-      ECS / Fargate                        Dedicated EC2
+      Standard Runtime                   Advanced Runtime
+      ECS / Fargate                      Shared EC2 Worker Pool
               │                                 │
-         MiniStack                          MiniStack
-        ephemeral                         container runtime
+      ┌───────┴────────┐                ┌───────┴──────────┐
+      │ Lab Router     │                │ Worker Agent      │
+      │ MiniStack      │                │ KVM/Firecracker   │
+      │ Internal Emu   │                │  └ microVM / Lab  │
+      │ Snapshot Agent │                │     ├ MiniStack    │
+      └────────────────┘                │     ├ Docker       │
+                                        │     └ Internal Emu │
+                                        └────────────────────┘
 ```
+
+1 LabWorkspaceについて同時にActiveとなるRuntimeは1つだけとする。Advanced機能が必要になった場合はStandard RuntimeをSuspendし、Snapshotを介して共有Advanced Worker Pool上のLab専用microVMへResumeする。
+
+この方式により、Standard LabはFargateのコスト特性を維持しつつ、Advanced Labは複数LabでEC2 Host capacityを共有する。
 
 ### 3.2 AWS 基盤サービス
 
@@ -81,7 +88,8 @@
 | 管理DB | Aurora PostgreSQL | Lab状態・設定・Audit・Snapshotメタデータ |
 | Platformオブジェクト保存 | S3 | ドキュメント・成果物・SBOM等 |
 | Lab Snapshot Store | S3 | 専用Bucket。SSE-KMS、Lifecycle、Public Access Block |
-| Container Image | ECR | MiniStack imageも社内mirror |
+| Container Image | ECR | MiniStack / Worker Agent / microVM rootfs等を社内管理 |
+| Advanced Worker | EC2 Auto Scaling Group | Nested Virtualization対応instance。複数Lab microVMをbin-pack |
 | ログ | CloudWatch Logs | Payload全文は記録しない |
 | メトリクス | CloudWatch | Lab稼働数・CPU・Memory・Snapshot容量等 |
 | 暗号鍵 | KMS | Aurora/S3/Logs/Snapshot等 |
@@ -275,44 +283,214 @@ Resume が失敗しても元 Snapshot object は変更・削除しない。
 
 ## 4.4 Advanced Lab Runtime
 
-Standard Lab 上で安全に提供できない Data Plane を対象とする。
+Standard Runtime上で安全に提供できないData Planeを対象とする。
 
-### 想定対象
+### 4.4.1 対象
 
-- RDS 実DB
-- ElastiCache 実Redis/Memcached
+例:
+
+- RDS実DB
+- ElastiCache実Redis/Memcached/Valkey
 - ECS workload
 - EKS/k3s
 - Docker executorを利用するLambda Runtime
-- その他 nested container / privileged相当機能を要求するサービス
+- CodeBuild等の任意container実行
+- OpenSearch等の実backend
+- その他nested container / privileged相当機能を要求するサービス
 
-### 初期設計
+### 4.4.2 Shared Advanced Worker Pool
 
-Advanced Lab は専用 EC2 Worker Pool 上に配置する。
+Advanced Runtimeは、Nested Virtualization対応EC2で構成するAuto Scaling Group上に配置する。
 
-初期段階では共有EC2上に複数利用者の高権限Labを混在させるより、必要に応じて「1 Advanced Lab = 1 EC2」を選択できる構成を優先する。
+1 EC2 = 1 Labとはせず、1台のWorker Hostに複数Labを収容する。
+
+ただし、異なるLabのDocker containerをHost kernel上へ直接混在させない。
 
 ```text
-Start Advanced Lab
-        ↓
-EC2 Launch
-        ↓
-Bootstrap MiniStack + runtime
-        ↓
-Ready
-        ↓
-Use
-        ↓
-Terminate EC2
+Advanced Worker EC2
+  │
+  ├ Worker Agent
+  ├ Firecracker/KVM
+  │
+  ├ microVM: Lab-A
+  │    ├ MiniStack
+  │    ├ Docker Engine
+  │    └ user/backend containers
+  │
+  ├ microVM: Lab-B
+  │    ├ MiniStack
+  │    ├ Docker Engine
+  │    └ user/backend containers
+  │
+  └ microVM: Lab-C
+       ├ MiniStack
+       ├ Docker Engine
+       └ user/backend containers
 ```
 
-EC2 Worker は既存業務サーバーと同居させない。
+**1 Advanced Lab = 1 microVM** をtenant isolationの基本単位とする。
 
-### Advanced Lab Snapshot
+Worker Host上では利用者コード、利用者container、Lab用Docker daemonを直接動作させない。
 
-RDS/ECS/EKS等は MiniStack state JSON だけでなく Docker volume や実データプレーンの保存が必要になるため、Standard Lab と同じ Snapshot 実装をそのまま適用しない。
+### 4.4.3 microVM方式
 
-初期リリースでは Advanced Lab の Snapshot 対応を Compatibility Matrix で `full / partial / none` として管理し、完全 Resume は後続フェーズとする。将来的には専用 EBS data volume の Snapshot、サービス別export、またはEC2単位の復元方式を検討する。
+初期候補はFirecracker + KVMとする。
+
+Worker EC2ではNested Virtualizationを有効化し、guest microVMごとに以下を分離する。
+
+- guest kernel
+- PID/process
+- Docker daemon
+- filesystem
+- Lab state
+- CPU/Memory quota
+- network namespace
+- virtual NIC
+- data disk
+
+Firecracker採用時はJailer、seccomp、cgroups、namespace isolation、non-root executionをproduction baselineとする。
+
+具体製品の最終採用はPhase 0のPoCで確定するが、「共有EC2上の直接Docker multi-tenancy」は代替案としない。
+
+### 4.4.4 Resource Profile
+
+Advanced microVMは任意値ではなく固定profileから割り当てる。
+
+初期案:
+
+| Profile | vCPU | Memory | Lab data disk | 想定 |
+| --- | ---: | ---: | ---: | --- |
+| small | 1 | 2 GiB | 8 GiB | 小規模RDS/Lambda |
+| medium | 2 | 4 GiB | 16 GiB | RDS + Lambda / ECS |
+| large | 4 | 8 GiB | 32 GiB | EKS / 複数backend |
+
+値はPhase 0 benchmark後に確定する。
+
+Host OS / Worker Agent / hypervisor用に15〜20%程度のCPU/Memory余力を確保し、全capacityをguestへ割り当てない。
+
+### 4.4.5 Placement / Bin Packing
+
+Lab Control Plane内のAdvanced Schedulerが配置を決定する。
+
+1. 要求profileを収容可能なReady Workerを検索する。
+2. memoryを第一制約、vCPUを第二制約としてbin-packする。
+3. 収容可能なWorkerが複数ある場合は残余capacityが最小となるWorkerを優先する。
+4. 収容先がない場合はASGをscale outする。
+5. Worker Ready後にmicroVMを起動する。
+
+Workerごとに最大microVM数もHard Limitとして持つ。
+
+Scale Inはactive microVMが0のWorkerのみを対象とし、drain完了後にTerminateする。初期リリースではmicroVMのlive migrationは行わない。
+
+### 4.4.6 Standard → Advanced昇格
+
+Advanced-only機能を初めて利用する場合、同じLabWorkspaceを別Runtimeへ移行する。
+
+```text
+Standard Ready
+   ↓
+Advanced resource requested
+   ↓
+Workspace mutation lock
+   ↓
+Standard Runtime quiesce
+   ↓
+Snapshot
+   ↓
+Fargate Task stop
+   ↓
+Advanced Worker allocation
+   ↓
+Lab microVM boot
+   ↓
+Snapshot restore
+   ↓
+MiniStack + Docker startup
+   ↓
+sanity check
+   ↓
+Advanced Ready
+```
+
+Virtual AWS Account ID、Region、ARN namespace、LabWorkspace IDは変更しない。
+
+同一WorkspaceでStandard FargateとAdvanced microVMを同時Activeにはしない。
+
+Advanced → Standardへの自動降格は初期リリースでは行わない。
+
+### 4.4.7 Network Isolation
+
+各microVMは専用network namespace / TAPを持つ。
+
+以下を必須とする。
+
+- Lab間通信deny
+- Internet direct egress deny
+- corporate network routeなし
+- IMDS `169.254.169.254` deny
+- Worker Host management endpoint deny
+- Host filesystem / Docker socket非共有
+- Platform Gatewayから対象Lab endpointへのみ許可
+
+外部接続が必要な学習シナリオはLab-aware Egress Proxy経由とする。
+
+### 4.4.8 Storage
+
+Worker Hostには暗号化EBS data volumeを配置し、Labごとに専用data disk imageを作成する。
+
+- Lab間でdisk imageを共有しない
+- Host directoryをguestへshared mountしない
+- local diskはRuntime中のみ保持
+- Suspend完了後はSnapshot Storeへexport後にlocal copyを削除
+- Worker Terminate時はEBSをDeleteOnTerminationとする
+
+### 4.4.9 Advanced Snapshot
+
+Advanced SnapshotはmicroVM memoryのcheckpointではなく、AWS resource stateと必要なData Plane storageを保存する。
+
+```text
+mutation stop
+ ↓
+new invocation/task stop
+ ↓
+service-specific quiesce
+ ↓
+MiniStack graceful stop
+ ↓
+guest filesystem flush
+ ↓
+microVM stop
+ ↓
+state/data disk export
+ ↓
+Snapshot S3 upload + checksum
+ ↓
+local disk delete
+```
+
+Running process RAM、TCP connection等の一時実行状態は保存保証しない。
+
+Compatibility MatrixのSnapshot区分は最終的に以下へ拡張する。
+
+- full
+- configuration-only
+- partial
+- none
+
+### 4.4.10 Worker障害
+
+Advanced Runtime自体はHAとしない。
+
+Worker Host障害時:
+
+- 当該Worker上のLabSessionをfailedへ遷移する
+- 他Workerへ自動live migrationはしない
+- 最新Snapshotがあれば別WorkerへResume可能とする
+- 未Snapshot変更の消失はLabの非永続性として許容する
+
+### 4.4.11 ADR
+
+本設計判断の詳細は `docs/adr/0001-shared-advanced-worker-pool.md` を参照する。
 
 ## 4.5 Service Adapter
 
@@ -460,9 +638,18 @@ Lab Runtime
 
 ## 7.3 Advanced Lab
 
-Advanced Lab は Standard Lab と Security Group、Subnet、IAM Role、実行Cluster等を分離する。
+Advanced Worker PoolはStandard LabとSubnet、Security Group、IAM Roleを分離する。
 
-Container runtimeを操作できるプロセスからPlatformの管理ネットワークへ到達させない。
+Worker Hostは管理用通信と必要なAWS Private Endpoint通信のみ許可する。
+
+microVMごとにnetwork namespace/TAPを分離し、以下をdenyする。
+
+- microVM間の直接通信
+- guestからWorker Host management networkへの通信
+- guestからIMDSへの通信
+- Internet/corporate networkへの直接通信
+
+PlatformからAdvanced Labへの通信はWorker Agent/Runtime Gatewayを経由し、Lab IDとRuntime bindingを検証して対象microVMのMiniStack endpointだけへ転送する。
 
 ## 7.4 外部通信が必要なAWSサービス
 
@@ -492,11 +679,25 @@ Snapshot transfer を Runtime 自身に行わせる場合は、当該 Lab の Sn
 
 ## 8.3 Advanced Worker Role
 
-Standard Labと完全分離する。
+Advanced Worker EC2のInstance ProfileはHost管理に必要な最小権限のみとする。
 
-必要権限を限定し、利用者コードからInstance Metadata / AWS Credentialを取得できる可能性も考慮して防御する。
+許可候補:
 
-IMDS設定、network namespace、runtime security等は詳細設計で確定する。
+- Worker登録/heartbeat
+- CloudWatch Logs/Metrics
+- ECR/rootfs artifact取得
+- Snapshot Broker経由の処理に必要な限定操作
+
+Lab guestやguest内Docker containerへInstance Profile credentialを公開しない。
+
+対策:
+
+- IMDSv2 required
+- guest networkから169.254.169.254をdeny
+- Host network namespaceとguest network namespaceを分離
+- Instance Profileに既存業務resourceへの権限を持たせない
+
+Snapshot S3/KMSへの直接権限をWorker Hostへ持たせる場合も、専用prefixと操作を限定する。より厳格な構成ではSnapshot Brokerがupload/downloadを仲介する。
 
 ## 8.4 Snapshot Store Role
 
@@ -542,7 +743,8 @@ Aurora PostgreSQLに以下を保持する。
 
 - id
 - type
-- ecsTaskArn / ec2InstanceId
+- ecsTaskArn / workerInstanceId / microvmId
+- runtimeProfile
 - privateEndpoint
 - engineVersion
 - engineImageDigest
@@ -1129,12 +1331,16 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 
 ### Phase 3: Advanced Lab
 
-- Dedicated EC2 Worker
+- Shared Advanced Worker Pool / Auto Scaling Group
+- Nested Virtualization / KVM検証
+- Lab単位microVM lifecycle
+- Bin Packing Scheduler
 - Lambda Data Plane
 - RDS
 - ElastiCache
 - ECS/EKS等
-- Advanced Lab Snapshot方式検証
+- Standard → Advanced昇格
+- Advanced Lab Snapshot / 別Worker Restore検証
 
 ### Phase 4: Learning Features
 
@@ -1197,7 +1403,7 @@ aws-internal-lab/
 - Snapshot archive形式・圧縮方式
 - Snapshot Bucket Versioningの有無
 - Snapshot transferをControl Plane側/sidecar側のどちらで行うか
-- Advanced Labを1 Lab = 1 EC2とする範囲
+- Advanced Workerのinstance family/size、1 HostあたりmicroVM密度、Resource Profile初期値
 - Advanced Lab Snapshot方式
 - Audit保存期間
 - DLP補助機能の初期導入有無
