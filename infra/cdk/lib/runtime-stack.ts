@@ -1,6 +1,5 @@
 import {
   CfnOutput,
-  Duration,
   RemovalPolicy,
   Stack,
   type StackProps,
