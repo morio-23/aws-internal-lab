@@ -748,6 +748,7 @@ LabWorkspace
 - 同一Workspaceで両Regionのresourceを同時に保持できる。
 - Physical Runtimeの配置RegionとVirtual Regionは独立させる。
 - 初期リリースでは上記2Region以外を作成・選択できない。
+- 各AWSサービスのRegion Availabilityは実AWSに合わせ、Compatibility Matrixの `supportedVirtualRegions` を正とする。実AWSで大阪未提供のサービスをLabだけ大阪で提供しない。
 - 将来的なRegion追加が可能なデータ構造は維持するが、追加はCompatibility/DR教材/Provider対応を含む変更管理対象とする。
 
 AWS公式上でも東京は `ap-northeast-1`、大阪は `ap-northeast-3` として扱われるため、学習時のRegion codeは実AWSと同一にする。
