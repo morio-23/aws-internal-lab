@@ -73,7 +73,7 @@ export function createRuntimeGatewayFromEnvironment() {
 
   const persistMinistack = async () => {
     const response = await fetch(
-      ministackEndpoint + "_aws_internal_lab/persist",
+      new URL("/_aws_internal_lab/persist", parsedEndpoint).toString(),
       {
         method: "POST",
         signal: AbortSignal.timeout(30_000),
