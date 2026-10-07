@@ -113,3 +113,38 @@ test("Standard snapshot manager inventories only available managed volumes acros
     },
   ]);
 });
+
+
+test("Standard snapshot manager deletes its managed snapshot after timeout", async () => {
+  const deleted: string[] = [];
+  const manager = new AwsStandardSnapshotManager({
+    pollIntervalMs: 0,
+    maxPollAttempts: 2,
+    client: {
+      async send(command) {
+        if (command instanceof CreateSnapshotCommand) {
+          return { SnapshotId: "snap-timeout" };
+        }
+        if (command instanceof DescribeSnapshotsCommand) {
+          return { Snapshots: [{ State: "pending" }] };
+        }
+        if (command instanceof DeleteSnapshotCommand) {
+          if (command.input.SnapshotId) deleted.push(command.input.SnapshotId);
+          return {};
+        }
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      manager.createSnapshot({
+        volumeId: "vol-timeout",
+        workspaceId: "workspace-timeout",
+        snapshotId: "lab-snapshot-timeout",
+      }),
+    /EBS_SNAPSHOT_TIMEOUT/,
+  );
+  assert.deepEqual(deleted, ["snap-timeout"]);
+});
