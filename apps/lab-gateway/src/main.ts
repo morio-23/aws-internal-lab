@@ -49,10 +49,8 @@ export function createRuntimeGatewayFromEnvironment() {
     }),
   };
 
-  const publicKeyB64 = process.env.PLATFORM_RUNTIME_PUBLIC_KEY_B64;
-  const platformPublicKeyPem = publicKeyB64
-    ? Buffer.from(publicKeyB64, "base64").toString("utf8")
-    : undefined;
+  const publicKeyB64 = required("PLATFORM_RUNTIME_PUBLIC_KEY_B64");
+  const platformPublicKeyPem = Buffer.from(publicKeyB64, "base64").toString("utf8");
 
   return createLabGatewayServer({
     binding,
@@ -61,7 +59,7 @@ export function createRuntimeGatewayFromEnvironment() {
         endpoint: process.env.MINISTACK_ENDPOINT ?? "http://127.0.0.1:4566",
       }),
     ],
-    ...(platformPublicKeyPem ? { platformPublicKeyPem } : {}),
+    platformPublicKeyPem,
   });
 }
 
