@@ -292,11 +292,15 @@ test("platform quiesce drains in-flight work, blocks new invokes, and can be rol
     releaseProvider = resolve;
   });
 
+  let persistCalls = 0;
   const server = createLabGatewayServer({
     binding,
     registry,
     platformPublicKeyPem: keys.publicKeyPem,
     quiesceTimeoutMs: 1_000,
+    persistMinistack: async () => {
+      persistCalls += 1;
+    },
     providers: [
       {
         kind: "internal",
@@ -360,6 +364,17 @@ test("platform quiesce drains in-flight work, blocks new invokes, and can be rol
       status: "quiesced",
       activeInvocations: 0,
     });
+
+    const persisted = await fetch(`${baseUrl}/admin/persist`, {
+      method: "POST",
+      headers: { authorization: "Bearer " + token },
+    });
+    assert.equal(persisted.status, 200);
+    assert.deepEqual(await persisted.json(), {
+      status: "persisted",
+      activeInvocations: 0,
+    });
+    assert.equal(persistCalls, 1);
 
     const blockedInvoke = await fetch(`${baseUrl}/invoke`, {
       method: "POST",
