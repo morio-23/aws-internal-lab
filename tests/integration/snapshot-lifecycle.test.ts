@@ -137,6 +137,12 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
   const provisioner = new SnapshotFakeProvisioner();
   const snapshotManager = new SnapshotFakeManager();
   const manifestStore = new MemoryManifestStore();
+  const gatewayAdmin = {
+    quiesced: 0,
+    unquiesced: 0,
+    async quiesce() { this.quiesced += 1; },
+    async unquiesce() { this.unquiesced += 1; },
+  };
 
   const start = await createLifecycleOperation({
     databaseUrl,
@@ -177,6 +183,7 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
     provisioner,
     snapshotManager,
     manifestStore,
+    gatewayAdmin,
     now: () => new Date("2026-10-07T10:00:00.000Z"),
   });
 
@@ -189,6 +196,8 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
   );
   assert.deepEqual(snapshotManager.createdFromVolumes, ["vol-snapshot-1"]);
   assert.deepEqual(snapshotManager.deletedVolumes, ["vol-snapshot-1"]);
+  assert.equal(gatewayAdmin.quiesced, 1);
+  assert.equal(gatewayAdmin.unquiesced, 0);
 
   const snapshot = await getAvailableSnapshotForWorkspace({
     databaseUrl,
