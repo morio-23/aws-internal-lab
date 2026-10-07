@@ -48,7 +48,18 @@ test("outbox and worker cycle provision then stop the API-created runtime", asyn
     async getManifest() { throw new Error("unused"); },
     async deleteManifest() {},
   };
-  const cycle = () => runStandardWorkerCycle({ databaseUrl, queue, provisioner, snapshotManager, manifestStore });
+  const gatewayAdmin = {
+    async quiesce() {},
+    async unquiesce() {},
+  };
+  const cycle = () => runStandardWorkerCycle({
+    databaseUrl,
+    queue,
+    provisioner,
+    snapshotManager,
+    manifestStore,
+    gatewayAdmin,
+  });
 
   await createLifecycleOperation({ databaseUrl, workspaceId: workspace.id, idempotencyKey: "worker-start", operationType: "start", requestedBy: identity.subject, correlationId: "worker-start", requestHash: "worker-start" });
   const started = await cycle();
