@@ -9,6 +9,7 @@
 | `03_basic_design.md` | AWS基盤・Lab Runtime・データ・ネットワーク等の基本設計 |
 | `04_ip_guidelines.md` | AWS Console再現に関する知財・ブランド利用ルール |
 | `05_incident_guardrails.md` | 事故想定、技術的ガードレール、Severity、封じ込め・復旧・Runbook要件 |
+| `06_phase0_prototype_plan.md` | Phase 0 Prototypeの実装順、Done Criteria、Go/No-Go Gate |
 | `adr/0001-shared-advanced-worker-pool.md` | 共有Advanced Worker / microVM / ACU Auto Scaling |
 | `adr/0002-virtual-aws-workspace-and-provider-routing.md` | Virtual Account/Region/ARN、Provider Routing、認証認可、API境界 |
 | `adr/0003-tokyo-osaka-virtual-regions-dr-learning.md` | 東京・大阪Virtual Region、Regional Fault Injection、DR学習 |
