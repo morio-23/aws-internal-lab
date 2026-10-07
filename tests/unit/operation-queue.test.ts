@@ -23,6 +23,7 @@ test("SQS operation queue sends FIFO identity and acknowledges received messages
   assert.equal((commands[0] as SendMessageCommand).input.MessageGroupId, "workspace-1");
   assert.equal((commands[0] as SendMessageCommand).input.MessageDeduplicationId, "outbox-1");
   assert.deepEqual(await queue.receive(), [{ body: { operationId: "operation-1" }, receiptHandle: "receipt-1" }]);
+  assert.equal((commands[1] as ReceiveMessageCommand).input.VisibilityTimeout, 900);
   await queue.delete("receipt-1");
   assert.equal((commands[2] as DeleteMessageCommand).input.ReceiptHandle, "receipt-1");
 });
