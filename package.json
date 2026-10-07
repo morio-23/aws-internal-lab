@@ -5,14 +5,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/unit/bootstrap.test.ts tests/unit/aws-virtual.test.ts tests/unit/auth.test.ts tests/unit/control-plane-server.test.ts tests/unit/lifecycle.test.ts tests/unit/service-capabilities.test.ts tests/unit/lab-gateway.test.ts tests/unit/lab-gateway-server.test.ts",
-    "lint": "eslint apps packages tests scripts",
+    "test": "node --import tsx --test tests/unit/bootstrap.test.ts tests/unit/aws-virtual.test.ts tests/unit/auth.test.ts tests/unit/control-plane-server.test.ts tests/unit/lifecycle.test.ts tests/unit/service-capabilities.test.ts tests/unit/lab-gateway.test.ts tests/unit/lab-gateway-server.test.ts tests/unit/runtime-infra.test.ts tests/unit/standard-runtime-provisioner.test.ts",
+    "lint": "eslint apps packages infra tests scripts",
     "check": "pnpm lint && pnpm boundaries && pnpm typecheck && pnpm test && pnpm build && pnpm build:web",
     "boundaries": "node scripts/check-boundaries.mjs",
     "dev:control-plane": "tsx apps/control-plane/src/server.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "test:integration:db": "node --import tsx --test tests/integration/db.test.ts tests/integration/workspace.test.ts tests/integration/lifecycle.test.ts",
-    "build:web": "pnpm --filter @aws-internal-lab/web build"
+    "build:web": "pnpm --filter @aws-internal-lab/web build",
+    "cdk:synth": "tsx infra/cdk/bin/app.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
@@ -21,10 +22,13 @@
     "globals": "^16.3.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
-    "typescript-eslint": "^8.42.0"
+    "typescript-eslint": "^8.42.0",
+    "aws-cdk-lib": "2.272.0",
+    "constructs": "10.8.1"
   },
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
-    "postgres": "^3.4.7"
+    "postgres": "^3.4.7",
+    "@aws-sdk/client-ecs": "3.1127.0"
   }
 }
