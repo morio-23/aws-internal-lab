@@ -24,6 +24,29 @@ export class RuntimeStack extends Stack {
       description: "AWS account ID hosting the Platform Control Plane",
       allowedPattern: "^[0-9]{12}$",
     });
+    const platformVpcCidr = new CfnParameter(this, "PlatformVpcCidr", {
+      type: "String",
+      description: "Platform VPC CIDR routed over the Phase 0 VPC peering connection",
+      allowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$",
+    });
+    const platformBffSecurityGroupId = new CfnParameter(
+      this,
+      "PlatformBffSecurityGroupId",
+      {
+        type: "String",
+        description: "Platform BFF security group allowed to reach Lab Gateway:8080",
+        allowedPattern: "^sg-[0-9a-fA-F]+$",
+      },
+    );
+    const runtimeVpcPeeringConnectionId = new CfnParameter(
+      this,
+      "RuntimeVpcPeeringConnectionId",
+      {
+        type: "String",
+        description: "Accepted VPC peering connection between Platform and Runtime VPCs",
+        allowedPattern: "^pcx-[0-9a-fA-F]+$",
+      },
+    );
 
     const vpc = new ec2.Vpc(this, "RuntimeVpc", {
       ipAddresses: ec2.IpAddresses.cidr("10.30.0.0/16"),
@@ -38,10 +61,27 @@ export class RuntimeStack extends Stack {
       ],
     });
 
+    vpc.isolatedSubnets.forEach((subnet, index) => {
+      new ec2.CfnRoute(this, `PlatformPeeringRoute${index + 1}`, {
+        routeTableId: subnet.routeTable.routeTableId,
+        destinationCidrBlock: platformVpcCidr.valueAsString,
+        vpcPeeringConnectionId: runtimeVpcPeeringConnectionId.valueAsString,
+      });
+    });
+
     const taskSecurityGroup = new ec2.SecurityGroup(this, "StandardTaskSecurityGroup", {
       vpc,
       description: "Standard Lab Fargate task security group",
       allowAllOutbound: true,
+    });
+    new ec2.CfnSecurityGroupIngress(this, "PlatformBffToLabGateway", {
+      groupId: taskSecurityGroup.securityGroupId,
+      ipProtocol: "tcp",
+      fromPort: 8080,
+      toPort: 8080,
+      sourceSecurityGroupId: platformBffSecurityGroupId.valueAsString,
+      sourceSecurityGroupOwnerId: platformAccountId.valueAsString,
+      description: "Allow only Platform BFF to reach the private Lab Gateway",
     });
 
     const endpointSecurityGroup = new ec2.SecurityGroup(this, "EndpointSecurityGroup", {
