@@ -25,6 +25,7 @@ class FakeProvisioner implements StandardRuntimeProvisioner {
     state: "running",
     taskArn: "task-prototype",
     privateIpv4Address: "10.30.1.20",
+    stateVolumeId: "vol-test-runtime",
   };
 
   async start() {
