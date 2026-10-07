@@ -240,7 +240,12 @@ export async function executeStandardRuntimeOperation(input: {
           });
         }
         if (runtime.stateVolumeRef && input.snapshotManager) {
-          await input.snapshotManager.deleteVolume(runtime.stateVolumeRef);
+          try {
+            await input.snapshotManager.deleteVolume(runtime.stateVolumeRef);
+          } catch {
+            // Task stop is authoritative. Managed-volume reconciliation will
+            // retry cleanup once ECS has detached the preserved EBS volume.
+          }
         }
         await finishStandardRuntime({
           databaseUrl: input.databaseUrl,
