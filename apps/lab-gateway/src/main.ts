@@ -71,8 +71,22 @@ export function createRuntimeGatewayFromEnvironment() {
     throw new Error("MINISTACK_ENDPOINT_MUST_BE_LOOPBACK");
   }
 
+  const persistMinistack = async () => {
+    const response = await fetch(
+      ministackEndpoint + "_aws_internal_lab/persist",
+      {
+        method: "POST",
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error("MINISTACK_PERSIST_FAILED:" + response.status);
+    }
+  };
+
   return createLabGatewayServer({
     binding,
+    persistMinistack,
     providers: [
       new MiniStackProvider({
         endpoint: ministackEndpoint,
