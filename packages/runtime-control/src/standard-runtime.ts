@@ -24,6 +24,7 @@ export type StandardRuntimeInspection = {
   state: "running" | "stopped" | "missing";
   taskArn: string;
   privateIpv4Address?: string;
+  stateVolumeId?: string;
   stoppedReason?: string;
 };
 
@@ -210,11 +211,17 @@ export class EcsStandardRuntimeProvisioner
     }
 
     const task = result.tasks[0];
-    const details = task.attachments?.flatMap(
-      (attachment) => attachment.details ?? [],
-    );
-    const privateIpv4Address = details?.find(
+    const eniDetails = task.attachments
+      ?.filter((attachment) => attachment.type === "ElasticNetworkInterface")
+      .flatMap((attachment) => attachment.details ?? []);
+    const ebsDetails = task.attachments
+      ?.filter((attachment) => attachment.type === "AmazonElasticBlockStorage")
+      .flatMap((attachment) => attachment.details ?? []);
+    const privateIpv4Address = eniDetails?.find(
       (detail) => detail.name === "privateIPv4Address",
+    )?.value;
+    const stateVolumeId = ebsDetails?.find(
+      (detail) => detail.name === "volumeId",
     )?.value;
 
     const state =
@@ -226,6 +233,7 @@ export class EcsStandardRuntimeProvisioner
       state,
       taskArn,
       ...(privateIpv4Address ? { privateIpv4Address } : {}),
+      ...(stateVolumeId ? { stateVolumeId } : {}),
       ...(task.stoppedReason ? { stoppedReason: task.stoppedReason } : {}),
     };
   }
