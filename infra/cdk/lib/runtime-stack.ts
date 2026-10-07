@@ -47,13 +47,18 @@ export class RuntimeStack extends Stack {
         allowedPattern: "^pl-[0-9a-fA-F]+$",
       },
     );
-    const runtimeVpcPeeringConnectionId = new CfnParameter(
+    const platformVpcId = new CfnParameter(this, "PlatformVpcId", {
+      type: "String",
+      description: "Existing Platform VPC to peer with the Runtime VPC",
+      allowedPattern: "^vpc-[0-9a-fA-F]+$",
+    });
+    const platformVpcPeeringRoleArn = new CfnParameter(
       this,
-      "RuntimeVpcPeeringConnectionId",
+      "PlatformVpcPeeringRoleArn",
       {
         type: "String",
-        description: "Accepted VPC peering connection between Platform and Runtime VPCs",
-        allowedPattern: "^pcx-[0-9a-fA-F]+$",
+        description:
+          "Platform-account role that permits CloudFormation to accept the VPC peering connection",
       },
     );
 
@@ -70,11 +75,23 @@ export class RuntimeStack extends Stack {
       ],
     });
 
+    const platformPeering = new ec2.CfnVPCPeeringConnection(
+      this,
+      "PlatformRuntimeVpcPeering",
+      {
+        vpcId: vpc.vpcId,
+        peerVpcId: platformVpcId.valueAsString,
+        peerOwnerId: platformAccountId.valueAsString,
+        peerRoleArn: platformVpcPeeringRoleArn.valueAsString,
+        tags: [{ key: "ManagedBy", value: "aws-internal-lab" }],
+      },
+    );
+
     vpc.isolatedSubnets.forEach((subnet, index) => {
       new ec2.CfnRoute(this, `PlatformPeeringRoute${index + 1}`, {
         routeTableId: subnet.routeTable.routeTableId,
         destinationCidrBlock: platformVpcCidr.valueAsString,
-        vpcPeeringConnectionId: runtimeVpcPeeringConnectionId.valueAsString,
+        vpcPeeringConnectionId: platformPeering.ref,
       });
     });
 
@@ -83,15 +100,20 @@ export class RuntimeStack extends Stack {
       description: "Standard Lab Fargate task security group",
       allowAllOutbound: false,
     });
-    new ec2.CfnSecurityGroupIngress(this, "PlatformBffToLabGateway", {
-      groupId: taskSecurityGroup.securityGroupId,
-      ipProtocol: "tcp",
-      fromPort: 8080,
-      toPort: 8080,
-      sourceSecurityGroupId: platformBffSecurityGroupId.valueAsString,
-      sourceSecurityGroupOwnerId: platformAccountId.valueAsString,
-      description: "Allow only Platform BFF to reach the private Lab Gateway",
-    });
+    const platformBffIngress = new ec2.CfnSecurityGroupIngress(
+      this,
+      "PlatformBffToLabGateway",
+      {
+        groupId: taskSecurityGroup.securityGroupId,
+        ipProtocol: "tcp",
+        fromPort: 8080,
+        toPort: 8080,
+        sourceSecurityGroupId: platformBffSecurityGroupId.valueAsString,
+        sourceSecurityGroupOwnerId: platformAccountId.valueAsString,
+        description: "Allow only Platform BFF to reach the private Lab Gateway",
+      },
+    );
+    platformBffIngress.addDependency(platformPeering);
 
     const endpointSecurityGroup = new ec2.SecurityGroup(this, "EndpointSecurityGroup", {
       vpc,
@@ -330,6 +352,9 @@ export class RuntimeStack extends Stack {
     snapshotKey.grantEncryptDecrypt(orchestratorRole);
 
     new CfnOutput(this, "RuntimeVpcId", { value: vpc.vpcId });
+    new CfnOutput(this, "PlatformRuntimeVpcPeeringId", {
+      value: platformPeering.ref,
+    });
     new CfnOutput(this, "StandardClusterArn", { value: cluster.clusterArn });
     new CfnOutput(this, "RuntimeOrchestratorRoleArn", {
       value: orchestratorRole.roleArn,
