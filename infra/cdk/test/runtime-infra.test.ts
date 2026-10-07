@@ -16,10 +16,17 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
   template.resourceCountIs("AWS::ECR::Repository", 2);
   template.resourceCountIs("AWS::EC2::VPCEndpoint", 4);
   template.resourceCountIs("AWS::EC2::Route", 2);
+  template.resourceCountIs("AWS::EC2::VPCPeeringConnection", 1);
 
+  template.hasResourceProperties("AWS::EC2::VPCPeeringConnection", {
+    VpcId: Match.anyValue(),
+    PeerVpcId: { Ref: "PlatformVpcId" },
+    PeerOwnerId: { Ref: "PlatformAccountId" },
+    PeerRoleArn: { Ref: "PlatformVpcPeeringRoleArn" },
+  });
   template.hasResourceProperties("AWS::EC2::Route", {
     DestinationCidrBlock: { Ref: "PlatformVpcCidr" },
-    VpcPeeringConnectionId: { Ref: "RuntimeVpcPeeringConnectionId" },
+    VpcPeeringConnectionId: Match.anyValue(),
   });
   template.hasResourceProperties("AWS::EC2::SecurityGroupIngress", {
     IpProtocol: "tcp",
