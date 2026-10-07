@@ -17,6 +17,9 @@ test("operation worker requires all Standard Runtime infrastructure bindings", (
     process.env.PLATFORM_RUNTIME_PUBLIC_KEY_B64 = Buffer.from(
       pair.publicKeyPem,
     ).toString("base64");
+    process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64 = Buffer.from(
+      pair.privateKeyPem,
+    ).toString("base64");
 
     const dependencies = createStandardRuntimeDependenciesFromEnvironment();
     assert.ok(dependencies.provisioner);
@@ -39,6 +42,9 @@ test("operation worker fails closed when snapshot store binding is missing", () 
     delete process.env.SNAPSHOT_BUCKET_NAME;
     process.env.PLATFORM_RUNTIME_PUBLIC_KEY_B64 = Buffer.from(
       pair.publicKeyPem,
+    ).toString("base64");
+    process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64 = Buffer.from(
+      pair.privateKeyPem,
     ).toString("base64");
 
     assert.throws(
