@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 
 import { hasPermission } from "../../../packages/domain/src/auth.js";
+import { uuidv7 } from "../../../packages/domain/src/id.js";
+import { createLifecycleOperation } from "../../../packages/db/src/lifecycle-repository.js";
 import {
   createWorkspace,
   getWorkspaceForOwner,
@@ -24,6 +27,21 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function firstHeader(
+  value: string | string[] | undefined,
+): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function lifecycleRequestHash(
+  workspaceId: string,
+  operationType: string,
+): string {
+  return createHash("sha256")
+    .update(`${workspaceId}:${operationType}`)
+    .digest("hex");
 }
 
 export const server = createServer(async (request, response) => {
@@ -117,13 +135,75 @@ export const server = createServer(async (request, response) => {
       return;
     }
 
+    const lifecycleMatch = request.url?.match(
+      /^\/api\/v1\/workspaces\/([0-9a-f-]+)\/(start|stop)$/,
+    );
+    if (lifecycleMatch && request.method === "POST") {
+      if (!hasPermission(identity, "workspace:mutate-own")) {
+        json(response, 403, { error: { code: "FORBIDDEN" } });
+        return;
+      }
+
+      const workspaceId = lifecycleMatch[1];
+      const operationType = lifecycleMatch[2];
+      if (!workspaceId || !operationType) {
+        json(response, 400, { error: { code: "INVALID_LIFECYCLE_REQUEST" } });
+        return;
+      }
+
+      const workspace = await getWorkspaceForOwner({
+        databaseUrl,
+        workspaceId,
+        ownerSubject: identity.subject,
+      });
+      if (!workspace) {
+        json(response, 404, { error: { code: "WORKSPACE_NOT_FOUND" } });
+        return;
+      }
+
+      const idempotencyKey = firstHeader(request.headers["idempotency-key"]);
+      if (!idempotencyKey) {
+        json(response, 400, { error: { code: "IDEMPOTENCY_KEY_REQUIRED" } });
+        return;
+      }
+
+      const correlationId =
+        firstHeader(request.headers["x-correlation-id"]) ?? uuidv7();
+
+      const result = await createLifecycleOperation({
+        databaseUrl,
+        workspaceId,
+        idempotencyKey,
+        operationType,
+        requestedBy: identity.subject,
+        correlationId,
+        requestHash: lifecycleRequestHash(workspaceId, operationType),
+      });
+
+      json(response, 202, {
+        operationId: result.operation.id,
+        status: result.operation.status,
+        created: result.created,
+        correlationId,
+      });
+      return;
+    }
+
     json(response, 404, { error: { code: "NOT_FOUND" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    const status = /Unsupported virtual region/.test(message) ? 400 : 500;
+    const invalidRegion = /Unsupported virtual region/.test(message);
+    const conflict =
+      message === "IDEMPOTENCY_KEY_CONFLICT" ||
+      message === "WORKSPACE_BUSY";
+    const status = invalidRegion ? 400 : conflict ? 409 : 500;
     json(response, status, {
       error: {
-        code: status === 400 ? "INVALID_VIRTUAL_REGION" : "INTERNAL_ERROR",
+        code: invalidRegion
+          ? "INVALID_VIRTUAL_REGION"
+          : conflict
+            ? message
+            : "INTERNAL_ERROR",
       },
     });
   }
