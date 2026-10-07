@@ -44,7 +44,7 @@
 
 - 利用者ごとにLabを分離する。
 - Standard LabはTask/ENI等の実行境界を利用する。
-- 高権限なAdvanced Labは専用Workerまたは1 Lab = 1 EC2を優先する。
+- Advanced Labは共有EC2 Worker Poolを利用するが、1 Lab = 1 microVMとし、異なるLabのDocker workloadをHost kernel上へ直接混在させない。
 - MiniStack内部の論理アカウント分離のみをセキュリティ境界として扱わない。
 
 ### 3.3 Ephemeral by Default
@@ -65,7 +65,8 @@
 運営者は最低限以下を即時実行できること。
 
 - 個別Lab強制停止
-- Advanced Worker強制Terminate
+- 個別Advanced microVM強制停止
+- 必要時のAdvanced Worker drain / 強制Terminate
 - Resume禁止
 - Snapshot隔離/削除
 - 新規Lab作成停止
@@ -280,7 +281,7 @@ Snapshot Storeは「禁止情報が混入している可能性のあるUntrusted
 - Standard LabからInternet/AWS public endpointへの任意egressを禁止
 - 必要AWSサービスはVPC Endpoint単位でallowlist
 - AWS SDK endpointをLab Engineへ明示設定
-- Advanced LabでIMDS到達を制御
+- Advanced LabではguestからIMDS、Worker Host management endpoint、Host filesystem/container runtimeへの到達を禁止
 
 ### 検知
 
