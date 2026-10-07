@@ -30,6 +30,10 @@
   "packageManager": "pnpm@10.17.1",
   "dependencies": {
     "postgres": "^3.4.7",
-    "@aws-sdk/client-ecs": "3.1127.0"
+    "@aws-sdk/client-ecs": "3.1127.0",
+    "@aws-sdk/client-s3": "3.1127.0",
+    "@aws-sdk/client-dynamodb": "3.1127.0",
+    "@aws-sdk/client-sqs": "3.1127.0",
+    "@aws-sdk/util-dynamodb": "3.1127.0"
   }
 }
