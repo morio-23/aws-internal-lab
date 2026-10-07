@@ -6,6 +6,7 @@ import {
   DeleteSnapshotCommand,
   DeleteVolumeCommand,
   DescribeSnapshotsCommand,
+  DescribeVolumesCommand,
 } from "@aws-sdk/client-ec2";
 
 import { AwsStandardSnapshotManager } from "../../packages/runtime-control/src/standard-snapshot.js";
@@ -63,4 +64,52 @@ test("Standard snapshot manager deletes source volume and snapshot explicitly", 
 
   assert.equal(seen[0] instanceof DeleteVolumeCommand, true);
   assert.equal(seen[1] instanceof DeleteSnapshotCommand, true);
+});
+
+
+test("Standard snapshot manager inventories only available managed volumes across pages", async () => {
+  const manager = new AwsStandardSnapshotManager({
+    client: {
+      async send(command) {
+        if (command instanceof DescribeVolumesCommand) {
+          if (command.input.NextToken) {
+            return {
+              Volumes: [
+                {
+                  VolumeId: "vol-orphan-2",
+                  CreateTime: new Date("2026-10-07T09:00:00Z"),
+                },
+              ],
+            };
+          }
+          assert.deepEqual(command.input.Filters, [
+            { Name: "tag:ManagedBy", Values: ["aws-internal-lab"] },
+            { Name: "status", Values: ["available"] },
+          ]);
+          return {
+            Volumes: [
+              {
+                VolumeId: "vol-orphan-1",
+                CreateTime: new Date("2026-10-07T08:00:00Z"),
+              },
+              { VolumeId: undefined, CreateTime: new Date() },
+            ],
+            NextToken: "next",
+          };
+        }
+        return {};
+      },
+    },
+  });
+
+  assert.deepEqual(await manager.listManagedVolumes(), [
+    {
+      volumeId: "vol-orphan-1",
+      createTime: new Date("2026-10-07T08:00:00Z"),
+    },
+    {
+      volumeId: "vol-orphan-2",
+      createTime: new Date("2026-10-07T09:00:00Z"),
+    },
+  ]);
 });
