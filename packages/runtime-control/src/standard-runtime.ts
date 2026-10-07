@@ -1,0 +1,189 @@
+import {
+  DescribeTasksCommand,
+  ECSClient,
+  RunTaskCommand,
+  StopTaskCommand,
+  type DescribeTasksCommandOutput,
+  type ECSClientConfig,
+  type RunTaskCommandOutput,
+  type StopTaskCommandOutput,
+} from "@aws-sdk/client-ecs";
+
+export type StandardRuntimeIdentity = {
+  workspaceId: string;
+  sessionId: string;
+  virtualAccountId: string;
+  enabledRegions: readonly string[];
+};
+
+export type StandardRuntimeStartResult = {
+  taskArn: string;
+};
+
+export type StandardRuntimeInspection = {
+  state: "running" | "stopped" | "missing";
+  taskArn: string;
+  privateIpv4Address?: string;
+  stoppedReason?: string;
+};
+
+export interface StandardRuntimeProvisioner {
+  start(identity: StandardRuntimeIdentity): Promise<StandardRuntimeStartResult>;
+  stop(taskArn: string, reason: string): Promise<void>;
+  inspect(taskArn: string): Promise<StandardRuntimeInspection>;
+}
+
+type EcsSender = {
+  send(
+    command: RunTaskCommand | StopTaskCommand | DescribeTasksCommand,
+  ): Promise<
+    RunTaskCommandOutput | StopTaskCommandOutput | DescribeTasksCommandOutput
+  >;
+};
+
+export type EcsStandardRuntimeProvisionerConfig = {
+  clusterArn: string;
+  taskDefinitionArn: string;
+  subnetIds: readonly string[];
+  securityGroupIds: readonly string[];
+  client?: EcsSender;
+  clientConfig?: ECSClientConfig;
+};
+
+function env(name: string, value: string) {
+  return { name, value };
+}
+
+export class EcsStandardRuntimeProvisioner
+  implements StandardRuntimeProvisioner
+{
+  readonly #client: EcsSender;
+  readonly #clusterArn: string;
+  readonly #taskDefinitionArn: string;
+  readonly #subnetIds: readonly string[];
+  readonly #securityGroupIds: readonly string[];
+
+  constructor(config: EcsStandardRuntimeProvisionerConfig) {
+    if (config.subnetIds.length < 2) {
+      throw new Error("Standard Runtime requires subnets in at least two AZs");
+    }
+    if (config.securityGroupIds.length === 0) {
+      throw new Error("Standard Runtime requires at least one security group");
+    }
+
+    this.#client = config.client ?? new ECSClient(config.clientConfig ?? {});
+    this.#clusterArn = config.clusterArn;
+    this.#taskDefinitionArn = config.taskDefinitionArn;
+    this.#subnetIds = config.subnetIds;
+    this.#securityGroupIds = config.securityGroupIds;
+  }
+
+  async start(
+    identity: StandardRuntimeIdentity,
+  ): Promise<StandardRuntimeStartResult> {
+    const result = (await this.#client.send(
+      new RunTaskCommand({
+        cluster: this.#clusterArn,
+        taskDefinition: this.#taskDefinitionArn,
+        launchType: "FARGATE",
+        count: 1,
+        enableExecuteCommand: false,
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            assignPublicIp: "DISABLED",
+            subnets: [...this.#subnetIds],
+            securityGroups: [...this.#securityGroupIds],
+          },
+        },
+        startedBy: "aws-internal-lab-control-plane",
+        group: \`workspace:\${identity.workspaceId}\`,
+        tags: [
+          { key: "ManagedBy", value: "aws-internal-lab" },
+          { key: "WorkspaceId", value: identity.workspaceId },
+          { key: "SessionId", value: identity.sessionId },
+          { key: "VirtualAccountId", value: identity.virtualAccountId },
+        ],
+        overrides: {
+          containerOverrides: [
+            {
+              name: "lab-gateway",
+              environment: [
+                env("LAB_WORKSPACE_ID", identity.workspaceId),
+                env("LAB_SESSION_ID", identity.sessionId),
+                env("LAB_VIRTUAL_ACCOUNT_ID", identity.virtualAccountId),
+                env(
+                  "LAB_ENABLED_REGIONS",
+                  JSON.stringify(identity.enabledRegions),
+                ),
+              ],
+            },
+            {
+              name: "ministack",
+              environment: [
+                env("LAB_WORKSPACE_ID", identity.workspaceId),
+                env("LAB_VIRTUAL_ACCOUNT_ID", identity.virtualAccountId),
+              ],
+            },
+          ],
+        },
+      }),
+    )) as RunTaskCommandOutput;
+
+    const failure = result.failures?.[0];
+    if (failure) {
+      throw new Error(
+        \`ECS_RUN_TASK_FAILED:\${failure.reason ?? failure.detail ?? "unknown"}\`,
+      );
+    }
+
+    const taskArn = result.tasks?.[0]?.taskArn;
+    if (!taskArn) {
+      throw new Error("ECS_RUN_TASK_NO_TASK");
+    }
+
+    return { taskArn };
+  }
+
+  async stop(taskArn: string, reason: string): Promise<void> {
+    await this.#client.send(
+      new StopTaskCommand({
+        cluster: this.#clusterArn,
+        task: taskArn,
+        reason,
+      }),
+    );
+  }
+
+  async inspect(taskArn: string): Promise<StandardRuntimeInspection> {
+    const result = (await this.#client.send(
+      new DescribeTasksCommand({
+        cluster: this.#clusterArn,
+        tasks: [taskArn],
+      }),
+    )) as DescribeTasksCommandOutput;
+
+    if (result.failures?.length || !result.tasks?.[0]) {
+      return { state: "missing", taskArn };
+    }
+
+    const task = result.tasks[0];
+    const details = task.attachments?.flatMap(
+      (attachment) => attachment.details ?? [],
+    );
+    const privateIpv4Address = details?.find(
+      (detail) => detail.name === "privateIPv4Address",
+    )?.value;
+
+    const state =
+      task.lastStatus === "STOPPED" || task.desiredStatus === "STOPPED"
+        ? "stopped"
+        : "running";
+
+    return {
+      state,
+      taskArn,
+      ...(privateIpv4Address ? { privateIpv4Address } : {}),
+      ...(task.stoppedReason ? { stoppedReason: task.stoppedReason } : {}),
+    };
+  }
+}
