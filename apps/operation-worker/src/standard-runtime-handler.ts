@@ -21,6 +21,37 @@ function errorCode(error: unknown): string {
   return "STANDARD_RUNTIME_OPERATION_FAILED";
 }
 
+async function waitForRuntimeReady(input: {
+  provisioner: StandardRuntimeProvisioner;
+  taskArn: string;
+  attempts?: number;
+  intervalMs?: number;
+}): Promise<{ privateIpv4Address: string }> {
+  const attempts = input.attempts ?? 60;
+  const intervalMs = input.intervalMs ?? 2_000;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const inspection = await input.provisioner.inspect(input.taskArn);
+
+    if (inspection.state === "stopped" || inspection.state === "missing") {
+      throw new Error(
+        "STANDARD_RUNTIME_STOPPED_BEFORE_READY:" +
+          (inspection.stoppedReason ?? inspection.state),
+      );
+    }
+
+    if (inspection.state === "running" && inspection.privateIpv4Address) {
+      return { privateIpv4Address: inspection.privateIpv4Address };
+    }
+
+    if (attempt + 1 < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  throw new Error("STANDARD_RUNTIME_READY_TIMEOUT");
+}
+
 export async function executeStandardRuntimeOperation(input: {
   databaseUrl: string;
   operationId: string;
@@ -67,16 +98,17 @@ export async function executeStandardRuntimeOperation(input: {
       });
       taskArn = started.taskArn;
 
-      const inspection = await input.provisioner.inspect(taskArn);
-      const privateEndpoint = inspection.privateIpv4Address
-        ? inspection.privateIpv4Address + ":8080"
-        : undefined;
+      const ready = await waitForRuntimeReady({
+        provisioner: input.provisioner,
+        taskArn,
+      });
+      const privateEndpoint = ready.privateIpv4Address + ":8080";
 
       await markStandardRuntimeReady({
         databaseUrl: input.databaseUrl,
         runtimeId: runtime.runtimeId,
         providerRef: taskArn,
-        ...(privateEndpoint ? { privateEndpoint } : {}),
+        privateEndpoint,
       });
 
       await setOperationStatus({
