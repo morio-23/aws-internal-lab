@@ -96,6 +96,10 @@ class SnapshotFakeManager implements StandardSnapshotManager {
   async listManagedVolumes() {
     return [];
   }
+
+  async listManagedSnapshots() {
+    return [];
+  }
 }
 
 class MemoryManifestStore implements SnapshotManifestStore {
@@ -260,6 +264,7 @@ test("failed snapshot creation leaves the source Runtime running and unquiesces 
     async deleteVolume() {},
     async deleteSnapshot() {},
     async listManagedVolumes() { return []; },
+    async listManagedSnapshots() { return []; },
   };
   const manifestStore = new MemoryManifestStore();
   const events: string[] = [];
