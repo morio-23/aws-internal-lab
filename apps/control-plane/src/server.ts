@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { pathToFileURL } from "node:url";
 
 import { hasPermission } from "../../../packages/domain/src/auth.js";
 import {
@@ -128,8 +129,13 @@ export const server = createServer(async (request, response) => {
   }
 });
 
-if (process.env.NODE_ENV !== "test") {
+export function startServer(): void {
   server.listen(port, "0.0.0.0", () => {
     console.log(`control-plane listening on :${port}`);
   });
+}
+
+const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+if (entrypoint === import.meta.url) {
+  startServer();
 }
