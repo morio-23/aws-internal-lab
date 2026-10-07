@@ -18,6 +18,12 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
 
   template.hasResourceProperties("AWS::ECS::TaskDefinition", {
     Cpu: "1024",
+    Volumes: Match.arrayWith([
+      Match.objectLike({
+        Name: "lab-state",
+        ConfiguredAtLaunch: true,
+      }),
+    ]),
     Memory: "2048",
     NetworkMode: "awsvpc",
     RequiresCompatibilities: ["FARGATE"],
@@ -35,6 +41,16 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
         ReadonlyRootFilesystem: true,
       }),
     ]),
+  });
+
+  template.hasResourceProperties("AWS::IAM::Role", {
+    AssumeRolePolicyDocument: Match.objectLike({
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Principal: { Service: "ecs.amazonaws.com" },
+        }),
+      ]),
+    }),
   });
 
   const json = template.toJSON();
