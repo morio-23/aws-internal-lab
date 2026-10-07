@@ -148,3 +148,70 @@ test("Standard snapshot manager deletes its managed snapshot after timeout", asy
   );
   assert.deepEqual(deleted, ["snap-timeout"]);
 });
+
+
+test("Standard snapshot manager inventories only self-owned managed snapshots with logical IDs", async () => {
+  const manager = new AwsStandardSnapshotManager({
+    client: {
+      async send(command) {
+        if (command instanceof DescribeSnapshotsCommand) {
+          assert.deepEqual(command.input.OwnerIds, ["self"]);
+          assert.deepEqual(command.input.Filters, [
+            { Name: "tag:ManagedBy", Values: ["aws-internal-lab"] },
+          ]);
+          if (command.input.NextToken) {
+            return {
+              Snapshots: [
+                {
+                  SnapshotId: "snap-managed-2",
+                  StartTime: new Date("2026-10-07T09:30:00Z"),
+                  State: "pending",
+                  Tags: [
+                    { Key: "ManagedBy", Value: "aws-internal-lab" },
+                    { Key: "LabSnapshotId", Value: "lab-snapshot-2" },
+                  ],
+                },
+              ],
+            };
+          }
+          return {
+            Snapshots: [
+              {
+                SnapshotId: "snap-managed-1",
+                StartTime: new Date("2026-10-07T09:00:00Z"),
+                State: "completed",
+                Tags: [
+                  { Key: "ManagedBy", Value: "aws-internal-lab" },
+                  { Key: "LabSnapshotId", Value: "lab-snapshot-1" },
+                ],
+              },
+              {
+                SnapshotId: "snap-missing-logical-id",
+                StartTime: new Date("2026-10-07T09:10:00Z"),
+                State: "completed",
+                Tags: [{ Key: "ManagedBy", Value: "aws-internal-lab" }],
+              },
+            ],
+            NextToken: "next",
+          };
+        }
+        return {};
+      },
+    },
+  });
+
+  assert.deepEqual(await manager.listManagedSnapshots(), [
+    {
+      snapshotId: "snap-managed-1",
+      labSnapshotId: "lab-snapshot-1",
+      startTime: new Date("2026-10-07T09:00:00Z"),
+      state: "completed",
+    },
+    {
+      snapshotId: "snap-managed-2",
+      labSnapshotId: "lab-snapshot-2",
+      startTime: new Date("2026-10-07T09:30:00Z"),
+      state: "pending",
+    },
+  ]);
+});
