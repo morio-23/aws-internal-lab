@@ -280,6 +280,28 @@ Lab ごとに一時ストレージ上限を設定できること。
 
 利用者単位で Snapshot 数および総保存容量を制限できること。
 
+### FR-GUARD-008 Advanced Capacity Unit
+
+Advanced Runtimeの必要量を固定ProfileとCapacity Unitで管理し、利用者が任意にHost resourceを占有できないこと。
+
+### FR-GUARD-009 Advanced Worker Auto Scaling
+
+Advanced Worker Poolはpending capacity、利用率、idle時間、推定時間単価に基づいてWorker Classと台数を自動調整できること。
+
+初期閾値は以下とする。
+
+- Scale Out: Fleet利用率80%が5分継続、pending capacity不足、またはplacement failure
+- Scale In候補: active/starting Labが0のWorkerが15分idle
+- Consolidation: Fleet利用率45%未満が30分継続
+
+### FR-GUARD-010 Runtime Auto Promotion
+
+Standard RuntimeでAdvanced Runtime必須操作が要求された場合、Lab状態を保持したまま自動的にAdvanced Runtimeへ移行し、要求操作を継続できること。
+
+### FR-GUARD-011 Runtime Auto Downgrade
+
+Advanced必須resource/workloadが存在しなくなったLabはStandard復帰可能状態として管理し、次回Suspend/Resume等の安全な境界でFargateへ自動復帰できること。利用中のLabをコスト最適化のみを理由に強制移行しないこと。
+
 ## 6.6 ネットワーク
 
 ### FR-NET-001 Private 配置
