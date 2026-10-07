@@ -68,7 +68,7 @@ export async function createStandardSnapshotRecord(input: {
   try {
     const id = uuidv7();
     const retentionDays = input.retentionDays ?? 7;
-    const rows = await sql<SnapshotRow[]>\`
+    const rows = await sql<SnapshotRow[]>`
       INSERT INTO lab_snapshot (
         id,
         workspace_id,
@@ -80,17 +80,17 @@ export async function createStandardSnapshotRecord(input: {
         expires_at
       )
       VALUES (
-        \${id},
-        \${input.workspaceId},
-        \${input.sourceSessionId},
+        ${id},
+        ${input.workspaceId},
+        ${input.sourceSessionId},
         'creating',
         'standard',
         'ebs-snapshot',
         'application-consistent',
-        now() + (\${retentionDays} * interval '1 day')
+        now() + (${retentionDays} * interval '1 day')
       )
       RETURNING *
-    \`;
+    `;
     const row = rows[0];
     if (!row) throw new Error("SNAPSHOT_INSERT_FAILED");
     return mapSnapshot(row);
@@ -108,28 +108,28 @@ export async function markStandardSnapshotAvailable(input: {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
     await sql.begin(async (tx) => {
-      const rows = await tx<{ workspace_id: string }[]>\`
+      const rows = await tx<{ workspace_id: string }[]>`
         UPDATE lab_snapshot
         SET
           status = 'available',
-          provider_snapshot_ref = \${input.providerSnapshotRef},
-          manifest_key = \${input.manifestKey},
+          provider_snapshot_ref = ${input.providerSnapshotRef},
+          manifest_key = ${input.manifestKey},
           error_code = NULL
-        WHERE id = \${input.snapshotId}
+        WHERE id = ${input.snapshotId}
           AND status = 'creating'
         RETURNING workspace_id
-      \`;
+      `;
       const row = rows[0];
       if (!row) throw new Error("SNAPSHOT_NOT_CREATING");
 
-      await tx\`
+      await tx`
         UPDATE lab_workspace
         SET
-          current_snapshot_id = \${input.snapshotId},
+          current_snapshot_id = ${input.snapshotId},
           status = 'suspended',
           updated_at = now()
-        WHERE id = \${row.workspace_id}
-      \`;
+        WHERE id = ${row.workspace_id}
+      `;
     });
   } finally {
     await sql.end();
@@ -143,12 +143,12 @@ export async function markSnapshotFailed(input: {
 }): Promise<void> {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
-    await sql\`
+    await sql`
       UPDATE lab_snapshot
-      SET status = 'failed', error_code = \${input.errorCode}
-      WHERE id = \${input.snapshotId}
+      SET status = 'failed', error_code = ${input.errorCode}
+      WHERE id = ${input.snapshotId}
         AND status = 'creating'
-    \`;
+    `;
   } finally {
     await sql.end();
   }
@@ -161,16 +161,16 @@ export async function getAvailableSnapshotForWorkspace(input: {
 }): Promise<LabSnapshotRecord | null> {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
-    const rows = await sql<SnapshotRow[]>\`
+    const rows = await sql<SnapshotRow[]>`
       SELECT *
       FROM lab_snapshot
-      WHERE workspace_id = \${input.workspaceId}
+      WHERE workspace_id = ${input.workspaceId}
         AND status = 'available'
         AND deleted_at IS NULL
-        \${input.snapshotId ? sql\`AND id = \${input.snapshotId}\` : sql\`\`}
+        ${input.snapshotId ? sql`AND id = ${input.snapshotId}` : sql``}
       ORDER BY created_at DESC
       LIMIT 1
-    \`;
+    `;
     return rows[0] ? mapSnapshot(rows[0]) : null;
   } finally {
     await sql.end();
@@ -183,12 +183,12 @@ export async function markSnapshotRestored(input: {
 }): Promise<void> {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
-    await sql\`
+    await sql`
       UPDATE lab_snapshot
       SET last_restored_at = now()
-      WHERE id = \${input.snapshotId}
+      WHERE id = ${input.snapshotId}
         AND status = 'available'
-    \`;
+    `;
   } finally {
     await sql.end();
   }
