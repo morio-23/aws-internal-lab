@@ -12,6 +12,8 @@
 
 `04_ip_guidelines.md` と `05_incident_guardrails.md` は補足資料ではなく、それぞれ知財・安全設計に関する規範文書として扱う。
 
+`adr/0001-shared-advanced-worker-pool.md` はAdvanced Runtimeの共有EC2/microVM分離・ACU配置・自動スケール・Standard/Advanced切替に関する採用済みアーキテクチャ判断とする。
+
 実装・レビュー時に要件定義書または基本設計書と解釈が衝突する場合は、企画意図を確認した上で文書間の不整合を解消し、いずれかを黙示的に無視しない。
 
 ## サービス互換性管理
@@ -21,4 +23,4 @@
 ## 今後追加予定
 
 - `runbooks/` - 事故種別の具体Runbook
-- `adr/` - 重要なアーキテクチャ意思決定
+- `adr/` - 重要なアーキテクチャ意思決定。採用済みADRは基本設計と同等に実装判断へ反映する
