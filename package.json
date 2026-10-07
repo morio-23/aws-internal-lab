@@ -5,13 +5,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/unit/bootstrap.test.ts tests/unit/aws-virtual.test.ts tests/unit/auth.test.ts tests/unit/control-plane-server.test.ts",
+    "test": "node --import tsx --test tests/unit/bootstrap.test.ts tests/unit/aws-virtual.test.ts tests/unit/auth.test.ts tests/unit/control-plane-server.test.ts tests/unit/lifecycle.test.ts",
     "lint": "eslint apps packages tests scripts",
     "check": "pnpm lint && pnpm boundaries && pnpm typecheck && pnpm test && pnpm build && pnpm build:web",
     "boundaries": "node scripts/check-boundaries.mjs",
     "dev:control-plane": "tsx apps/control-plane/src/server.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "test:integration:db": "node --import tsx --test tests/integration/db.test.ts tests/integration/workspace.test.ts",
+    "test:integration:db": "node --import tsx --test tests/integration/db.test.ts tests/integration/workspace.test.ts tests/integration/lifecycle.test.ts",
     "build:web": "pnpm --filter @aws-internal-lab/web build"
   },
   "devDependencies": {
