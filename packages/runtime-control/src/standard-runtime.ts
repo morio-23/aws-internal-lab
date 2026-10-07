@@ -1,9 +1,11 @@
 import {
   DescribeTasksCommand,
   ECSClient,
+  ListTasksCommand,
   RunTaskCommand,
   StopTaskCommand,
   type DescribeTasksCommandOutput,
+  type ListTasksCommandOutput,
   type ECSClientConfig,
   type RunTaskCommandOutput,
 } from "@aws-sdk/client-ecs";
@@ -28,15 +30,21 @@ export type StandardRuntimeInspection = {
   stoppedReason?: string;
 };
 
+export type ManagedStandardTask = {
+  taskArn: string;
+  createdAt: Date;
+};
+
 export interface StandardRuntimeProvisioner {
   start(identity: StandardRuntimeIdentity): Promise<StandardRuntimeStartResult>;
   stop(taskArn: string, reason: string): Promise<void>;
   inspect(taskArn: string): Promise<StandardRuntimeInspection>;
+  listManagedTasks(): Promise<ManagedStandardTask[]>;
 }
 
 type EcsSender = {
   send(
-    command: RunTaskCommand | StopTaskCommand | DescribeTasksCommand,
+    command: RunTaskCommand | StopTaskCommand | DescribeTasksCommand | ListTasksCommand,
   ): Promise<unknown>;
 };
 
@@ -84,6 +92,7 @@ export class EcsStandardRuntimeProvisioner
         async send(command) {
           if (command instanceof RunTaskCommand) return ecs.send(command);
           if (command instanceof StopTaskCommand) return ecs.send(command);
+          if (command instanceof ListTasksCommand) return ecs.send(command);
           return ecs.send(command);
         },
       };
@@ -236,5 +245,33 @@ export class EcsStandardRuntimeProvisioner
       ...(stateVolumeId ? { stateVolumeId } : {}),
       ...(task.stoppedReason ? { stoppedReason: task.stoppedReason } : {}),
     };
+  }
+
+  async listManagedTasks(): Promise<ManagedStandardTask[]> {
+    const managed: ManagedStandardTask[] = [];
+    let nextToken: string | undefined;
+    do {
+      const page = (await this.#client.send(new ListTasksCommand({
+        cluster: this.#clusterArn,
+        desiredStatus: "RUNNING",
+        ...(nextToken ? { nextToken } : {}),
+      }))) as ListTasksCommandOutput;
+      const taskArns = page.taskArns ?? [];
+      if (taskArns.length > 0) {
+        const described = (await this.#client.send(new DescribeTasksCommand({
+          cluster: this.#clusterArn,
+          tasks: taskArns,
+          include: ["TAGS"],
+        }))) as DescribeTasksCommandOutput;
+        for (const task of described.tasks ?? []) {
+          if (!task.taskArn || !task.createdAt) continue;
+          if (task.tags?.some((tag) => tag.key === "ManagedBy" && tag.value === "aws-internal-lab")) {
+            managed.push({ taskArn: task.taskArn, createdAt: task.createdAt });
+          }
+        }
+      }
+      nextToken = page.nextToken;
+    } while (nextToken);
+    return managed;
   }
 }

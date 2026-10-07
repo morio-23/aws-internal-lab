@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 
 import {
   DeleteObjectCommand,
@@ -64,4 +65,53 @@ test("snapshot manifest store writes deterministic key and validates checksum", 
 
   await store.deleteManifest(written.key);
   assert.equal(seen.some((item) => item instanceof DeleteObjectCommand), true);
+});
+
+test("snapshot manifest store rejects missing checksum metadata", async () => {
+  const store = new S3SnapshotManifestStore({
+    bucket: "snapshot-bucket",
+    client: {
+      async send() {
+        return {
+          Body: { async transformToString() { return "{}"; } },
+          Metadata: {},
+        };
+      },
+    },
+  });
+  await assert.rejects(store.getManifest("snapshots/workspace/snapshot/manifest.json"),
+    /SNAPSHOT_MANIFEST_CHECKSUM_MISSING/);
+});
+
+test("snapshot manifest store rejects a checksummed unsupported format", async () => {
+  const body = JSON.stringify({ snapshotFormatVersion: 2, runtimeType: "standard" });
+  const store = new S3SnapshotManifestStore({
+    bucket: "snapshot-bucket",
+    client: {
+      async send() {
+        return {
+          Body: { async transformToString() { return body; } },
+          Metadata: { sha256: createHash("sha256").update(body).digest("hex") },
+        };
+      },
+    },
+  });
+  await assert.rejects(store.getManifest("snapshots/workspace/snapshot/manifest.json"),
+    /SNAPSHOT_MANIFEST_INVALID/);
+});
+
+test("snapshot manifest store rejects body tampering", async () => {
+  const store = new S3SnapshotManifestStore({
+    bucket: "snapshot-bucket",
+    client: {
+      async send() {
+        return {
+          Body: { async transformToString() { return '{"tampered":true}'; } },
+          Metadata: { sha256: "0".repeat(64) },
+        };
+      },
+    },
+  });
+  await assert.rejects(store.getManifest("snapshots/workspace/snapshot/manifest.json"),
+    /SNAPSHOT_MANIFEST_CHECKSUM_MISMATCH/);
 });

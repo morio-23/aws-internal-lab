@@ -53,6 +53,24 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
     }),
   });
 
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({ Action: "ecs:ListTasks" }),
+      ]),
+    },
+  });
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: "ecs:TagResource",
+          Condition: Match.objectLike({ StringEquals: Match.objectLike({ "ecs:CreateAction": "RunTask" }) }),
+        }),
+      ]),
+    },
+  });
+
   const json = template.toJSON();
   const subnets = Object.values(json.Resources).filter(
     (resource) =>
@@ -65,4 +83,26 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
       (resource as { Type?: string }).Type === "AWS::EC2::InternetGateway",
   );
   assert.equal(internetGateways.length, 0);
+
+  const endpoints = Object.values(json.Resources)
+    .filter((resource) => (resource as { Type?: string }).Type === "AWS::EC2::VPCEndpoint")
+    .map((resource) => (resource as { Properties: { VpcEndpointType: string; ServiceName: unknown } }).Properties);
+  assert.deepEqual(
+    endpoints.map((endpoint) => endpoint.VpcEndpointType).sort(),
+    ["Gateway", "Interface", "Interface", "Interface"],
+  );
+  const serviceNames = endpoints.map((endpoint) => JSON.stringify(endpoint.ServiceName));
+  for (const service of ["s3", "ecr.api", "ecr.dkr", "logs"]) {
+    assert.equal(serviceNames.some((name) => name.includes(service)), true);
+  }
+
+  const taskDefinition = Object.values(json.Resources).find(
+    (resource) => (resource as { Type?: string }).Type === "AWS::ECS::TaskDefinition",
+  ) as { Properties: { ContainerDefinitions: Array<{ Privileged?: boolean; MountPoints?: Array<{ SourceVolume: string; ContainerPath: string }> }> } };
+  assert.equal(taskDefinition.Properties.ContainerDefinitions.length, 2);
+  for (const container of taskDefinition.Properties.ContainerDefinitions) {
+    assert.equal(container.Privileged, false);
+    assert.equal(container.MountPoints?.some((mount) => mount.ContainerPath.includes("docker.sock")) ?? false, false);
+    assert.equal(container.MountPoints?.every((mount) => mount.SourceVolume === "lab-state") ?? true, true);
+  }
 });

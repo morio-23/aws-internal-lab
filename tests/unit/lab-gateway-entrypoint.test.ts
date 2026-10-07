@@ -51,3 +51,13 @@ test("Fargate Lab Gateway rejects unsupported enabled regions at startup", () =>
     );
   });
 });
+
+test("Fargate Lab Gateway rejects a public MiniStack endpoint", () => {
+  withRuntimeEnv(() => {
+    process.env.MINISTACK_ENDPOINT = "https://s3.ap-northeast-1.amazonaws.com";
+    assert.throws(
+      () => createRuntimeGatewayFromEnvironment(),
+      /MINISTACK_ENDPOINT_MUST_BE_LOOPBACK/,
+    );
+  });
+});

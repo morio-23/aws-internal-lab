@@ -235,6 +235,25 @@ export class RuntimeStack extends Stack {
     );
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
+        actions: ["ecs:ListTasks"],
+        resources: ["*"],
+        conditions: { ArnEquals: { "ecs:cluster": cluster.clusterArn } },
+      }),
+    );
+    orchestratorRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ecs:TagResource"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: {
+            "ecs:CreateAction": "RunTask",
+            "aws:RequestTag/ManagedBy": "aws-internal-lab",
+          },
+        },
+      }),
+    );
+    orchestratorRole.addToPolicy(
+      new iam.PolicyStatement({
         actions: [
           "ec2:CreateSnapshot",
           "ec2:DescribeSnapshots",

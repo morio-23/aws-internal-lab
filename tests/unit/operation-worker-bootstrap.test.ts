@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { generateRuntimeTokenKeyPair } from "../../packages/runtime-auth/src/index.js";
-import { createStandardRuntimeDependenciesFromEnvironment } from "../../apps/operation-worker/src/main.js";
+import { createOperationWorkerBindingsFromEnvironment, createStandardRuntimeDependenciesFromEnvironment } from "../../apps/operation-worker/src/main.js";
 
 test("operation worker requires all Standard Runtime infrastructure bindings", () => {
   const saved = { ...process.env };
@@ -45,6 +45,17 @@ test("operation worker fails closed when snapshot store binding is missing", () 
       () => createStandardRuntimeDependenciesFromEnvironment(),
       /SNAPSHOT_BUCKET_NAME/,
     );
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("operation worker requires a database and FIFO queue binding", () => {
+  const saved = { ...process.env };
+  try {
+    process.env.DATABASE_URL = "postgres://local/test";
+    delete process.env.OPERATION_QUEUE_URL;
+    assert.throws(() => createOperationWorkerBindingsFromEnvironment(), /OPERATION_QUEUE_URL/);
   } finally {
     process.env = saved;
   }

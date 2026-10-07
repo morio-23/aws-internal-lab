@@ -51,12 +51,31 @@ export function createRuntimeGatewayFromEnvironment() {
 
   const publicKeyB64 = required("PLATFORM_RUNTIME_PUBLIC_KEY_B64");
   const platformPublicKeyPem = Buffer.from(publicKeyB64, "base64").toString("utf8");
+  const ministackEndpoint = process.env.MINISTACK_ENDPOINT ?? "http://127.0.0.1:4566";
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(ministackEndpoint);
+  } catch {
+    throw new Error("MINISTACK_ENDPOINT_MUST_BE_LOOPBACK");
+  }
+  if (
+    parsedEndpoint.protocol !== "http:" ||
+    parsedEndpoint.hostname !== "127.0.0.1" ||
+    !parsedEndpoint.port ||
+    parsedEndpoint.username ||
+    parsedEndpoint.password ||
+    parsedEndpoint.pathname !== "/" ||
+    parsedEndpoint.search ||
+    parsedEndpoint.hash
+  ) {
+    throw new Error("MINISTACK_ENDPOINT_MUST_BE_LOOPBACK");
+  }
 
   return createLabGatewayServer({
     binding,
     providers: [
       new MiniStackProvider({
-        endpoint: process.env.MINISTACK_ENDPOINT ?? "http://127.0.0.1:4566",
+        endpoint: ministackEndpoint,
       }),
     ],
     platformPublicKeyPem,

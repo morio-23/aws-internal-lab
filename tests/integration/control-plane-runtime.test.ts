@@ -17,6 +17,7 @@ import {
 const databaseUrl = process.env.DATABASE_URL;
 
 class ApiFakeProvisioner implements StandardRuntimeProvisioner {
+  async listManagedTasks() { return []; }
   stopped = false;
 
   async start() {

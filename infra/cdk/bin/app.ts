@@ -2,7 +2,7 @@ import { App } from "aws-cdk-lib";
 
 import { RuntimeStack } from "../lib/runtime-stack.js";
 
-const app = new App();
+const app = new App({ outdir: "cdk.out" });
 
 new RuntimeStack(app, "AwsInternalLabRuntime", {
   env: {

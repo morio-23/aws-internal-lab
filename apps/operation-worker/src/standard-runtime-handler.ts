@@ -16,6 +16,7 @@ import {
   listActiveStandardRuntimes,
   markRuntimeHeartbeat,
   markStandardRuntimeReady,
+  recordStandardRuntimeTaskStarted,
 } from "../../../packages/db/src/runtime-repository.js";
 import type {
   SnapshotManifestStore,
@@ -24,6 +25,7 @@ import type {
   StandardSnapshotManager,
 } from "../../../packages/runtime-control/src/standard-snapshot.js";
 import type {
+  ManagedStandardTask,
   StandardRuntimeProvisioner,
 } from "../../../packages/runtime-control/src/standard-runtime.js";
 
@@ -118,6 +120,12 @@ async function startStandardRuntime(input: {
         : {}),
     });
     taskArn = started.taskArn;
+
+    await recordStandardRuntimeTaskStarted({
+      databaseUrl: input.databaseUrl,
+      runtimeId: runtime.runtimeId,
+      providerRef: taskArn,
+    });
 
     const ready = await waitForRuntimeReady({
       provisioner: input.provisioner,
@@ -452,10 +460,32 @@ export async function executeStandardRuntimeOperation(input: {
   throw new Error("UNSUPPORTED_STANDARD_RUNTIME_OPERATION");
 }
 
+export async function cleanupOrphanStandardTasks(input: {
+  provisioner: StandardRuntimeProvisioner;
+  activeTaskArns: readonly string[];
+  now?: Date;
+  graceMs?: number;
+}): Promise<{ inspected: number; stopped: number }> {
+  const tasks: ManagedStandardTask[] = await input.provisioner.listManagedTasks();
+  const active = new Set(input.activeTaskArns);
+  const now = input.now ?? new Date();
+  const graceMs = input.graceMs ?? 10 * 60_000;
+  let stopped = 0;
+
+  for (const task of tasks) {
+    if (active.has(task.taskArn)) continue;
+    if (now.getTime() - task.createdAt.getTime() < graceMs) continue;
+    await input.provisioner.stop(task.taskArn, "Orphan Standard Runtime cleanup");
+    stopped += 1;
+  }
+
+  return { inspected: tasks.length, stopped };
+}
+
 export async function reconcileStandardRuntimes(input: {
   databaseUrl: string;
   provisioner: StandardRuntimeProvisioner;
-}): Promise<{ checked: number; failed: number }> {
+}): Promise<{ checked: number; failed: number; orphanTasksStopped: number }> {
   const runtimes = await listActiveStandardRuntimes({
     databaseUrl: input.databaseUrl,
   });
@@ -486,5 +516,12 @@ export async function reconcileStandardRuntimes(input: {
     });
   }
 
-  return { checked: runtimes.length, failed };
+  const cleanup = await cleanupOrphanStandardTasks({
+    provisioner: input.provisioner,
+    activeTaskArns: runtimes
+      .map((runtime) => runtime.providerRef)
+      .filter((value): value is string => Boolean(value)),
+  });
+
+  return { checked: runtimes.length, failed, orphanTasksStopped: cleanup.stopped };
 }

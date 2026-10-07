@@ -30,6 +30,7 @@ import type {
 const databaseUrl = process.env.DATABASE_URL;
 
 class SnapshotFakeProvisioner implements StandardRuntimeProvisioner {
+  async listManagedTasks() { return []; }
   generation = 0;
   currentTaskArn: string | null = null;
   currentVolumeId: string | null = null;
