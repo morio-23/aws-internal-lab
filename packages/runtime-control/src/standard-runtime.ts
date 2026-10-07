@@ -60,7 +60,7 @@ export class EcsStandardRuntimeProvisioner
   readonly #taskDefinitionArn: string;
   readonly #subnetIds: readonly string[];
   readonly #securityGroupIds: readonly string[];
-  readonly #platformPublicKeyPem?: string;
+  readonly #platformPublicKeyPem: string | undefined;
 
   constructor(config: EcsStandardRuntimeProvisionerConfig) {
     if (config.subnetIds.length < 2) {
