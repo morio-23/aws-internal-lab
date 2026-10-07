@@ -411,3 +411,106 @@ test("platform quiesce drains in-flight work, blocks new invokes, and can be rol
     );
   }
 });
+
+
+test("quiesce timeout automatically restores request admission state", async () => {
+  const keys = generateRuntimeTokenKeyPair();
+  const virtualAccountId = "012345678901";
+  const sessionId = "session-quiesce-timeout";
+  const binding: LabBinding = {
+    workspaceId: "workspace-quiesce-timeout",
+    sessionId,
+    virtualAccountId,
+    enabledRegions: ["ap-northeast-1"],
+    credential: createLabCredential({ virtualAccountId, sessionId }),
+  };
+  const registry = createCapabilityRegistry([
+    {
+      serviceCode: "demo",
+      operation: "Mutate",
+      provider: "internal",
+      runtimeRequirement: "standard",
+      enabled: true,
+    },
+  ]);
+
+  let releaseProvider!: () => void;
+  let providerStarted!: () => void;
+  const started = new Promise<void>((resolve) => { providerStarted = resolve; });
+  const blocked = new Promise<void>((resolve) => { releaseProvider = resolve; });
+
+  const server = createLabGatewayServer({
+    binding,
+    registry,
+    platformPublicKeyPem: keys.publicKeyPem,
+    quiesceTimeoutMs: 10,
+    providers: [
+      {
+        kind: "internal",
+        async invoke() {
+          providerStarted();
+          await blocked;
+          return { mutated: true };
+        },
+      },
+    ],
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("failed to bind test server");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const token = signRuntimeToken({
+    privateKeyPem: keys.privateKeyPem,
+    workspaceId: binding.workspaceId,
+    sessionId,
+    virtualAccountId,
+    ttlSeconds: 60,
+  });
+
+  try {
+    const inFlight = fetch(`${baseUrl}/invoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer " + token,
+      },
+      body: JSON.stringify({
+        virtualRegion: "ap-northeast-1",
+        serviceCode: "demo",
+        operation: "Mutate",
+        correlationId: "corr-quiesce-timeout",
+      }),
+    });
+    await started;
+
+    const quiesce = await fetch(`${baseUrl}/admin/quiesce`, {
+      method: "POST",
+      headers: { authorization: "Bearer " + token },
+    });
+    assert.equal(quiesce.status, 503);
+    assert.deepEqual(await quiesce.json(), {
+      error: { code: "QUIESCE_TIMEOUT" },
+      activeInvocations: 1,
+    });
+
+    const health = await fetch(`${baseUrl}/healthz`);
+    assert.deepEqual(await health.json(), {
+      status: "ok",
+      quiescing: false,
+      activeInvocations: 1,
+    });
+
+    releaseProvider();
+    assert.equal((await inFlight).status, 200);
+  } finally {
+    releaseProvider();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
