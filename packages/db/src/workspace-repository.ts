@@ -20,6 +20,7 @@ export type LabWorkspaceRecord = {
   status: string;
   standardEligible: boolean;
   lifecycleVersion: number;
+  activeOperationId: string | null;
 };
 
 type WorkspaceRow = {
@@ -32,6 +33,7 @@ type WorkspaceRow = {
   status: string;
   standard_eligible: boolean;
   lifecycle_version: string | number;
+  active_operation_id: string | null;
 };
 
 function mapWorkspace(row: WorkspaceRow): LabWorkspaceRecord {
@@ -50,6 +52,7 @@ function mapWorkspace(row: WorkspaceRow): LabWorkspaceRecord {
     status: row.status,
     standardEligible: row.standard_eligible,
     lifecycleVersion: Number(row.lifecycle_version),
+    activeOperationId: row.active_operation_id,
   };
 }
 
