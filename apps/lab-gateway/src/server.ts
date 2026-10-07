@@ -30,6 +30,7 @@ export function createLabGatewayServer(input: {
   registry?: CapabilityRegistry;
   platformPublicKeyPem?: string;
   quiesceTimeoutMs?: number;
+  persistMinistack?: () => Promise<void>;
 }) {
   let quiescing = false;
   let activeInvocations = 0;
@@ -102,6 +103,29 @@ export function createLabGatewayServer(input: {
         }
         json(response, 200, {
           status: "quiesced",
+          activeInvocations,
+        });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/admin/persist") {
+        verifyPlatformRequest(request);
+        if (!quiescing || activeInvocations !== 0) {
+          json(response, 409, {
+            error: { code: "PERSIST_REQUIRES_QUIESCED_RUNTIME" },
+            activeInvocations,
+          });
+          return;
+        }
+        if (!input.persistMinistack) {
+          json(response, 503, {
+            error: { code: "MINISTACK_PERSIST_UNAVAILABLE" },
+          });
+          return;
+        }
+        await input.persistMinistack();
+        json(response, 200, {
+          status: "persisted",
           activeInvocations,
         });
         return;
