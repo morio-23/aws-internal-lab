@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      ministack:
+        image: ministackorg/ministack:1.5.22
+        ports:
+          - 4566:4566
+
       postgres:
         image: postgres:16-alpine
         env:
@@ -29,6 +34,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aws_internal_lab
+      MINISTACK_ENDPOINT: http://localhost:4566
 
     steps:
       - uses: actions/checkout@v4
