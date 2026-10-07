@@ -727,35 +727,50 @@ MiniStackへLab SDK requestを送る場合もこのIDを仮想Accountとして�
 
 物理RuntimeのAWS Regionと、利用者がConsole上で選択するVirtual Regionを分離する。
 
-初期default:
+初期提供するVirtual Regionは日本国内の2リージョンに固定する。
+
+| Role | AWS Region | Code |
+| --- | --- | --- |
+| Primary / East | Asia Pacific (Tokyo) | `ap-northeast-1` |
+| Secondary / West | Asia Pacific (Osaka) | `ap-northeast-3` |
+
+default Regionは `ap-northeast-1` とする。
 
 ```text
-ap-northeast-1
+LabWorkspace
+  ├ ap-northeast-1  # Tokyo / East
+  └ ap-northeast-3  # Osaka / West
 ```
-
-設計上は複数Virtual Regionを同一Workspaceで扱えるものとする。
 
 - Regional service stateは `virtualAccountId + virtualRegion + service` で分離する。
 - Global serviceはRegion非依存として扱う。
-- UIのRegion selectorはVirtual Regionを変更する。
-- Physical Runtimeが東京Regionに存在していても、Virtual Regionが `us-east-1` 等の場合がある。
-- AWS実環境のRegion availabilityとの差異はCompatibility Matrixで管理する。
+- UIのRegion selectorは東京 / 大阪の2つのみを表示する。
+- 同一Workspaceで両Regionのresourceを同時に保持できる。
+- Physical Runtimeの配置RegionとVirtual Regionは独立させる。
+- 初期リリースでは上記2Region以外を作成・選択できない。
+- 将来的なRegion追加が可能なデータ構造は維持するが、追加はCompatibility/DR教材/Provider対応を含む変更管理対象とする。
 
-初期提供RegionはConfiguration as Codeのallowlistとし、段階的に拡大する。
+AWS公式上でも東京は `ap-northeast-1`、大阪は `ap-northeast-3` として扱われるため、学習時のRegion codeは実AWSと同一にする。
 
 ### 4.6.3 Availability Zone
 
 AZは学習用の論理値としてVirtual Regionごとに提供する。
 
-例:
+初期論理AZ:
 
 ```text
-ap-northeast-1a
-ap-northeast-1b
-ap-northeast-1c
+Tokyo:
+  ap-northeast-1a
+  ap-northeast-1c
+  ap-northeast-1d
+
+Osaka:
+  ap-northeast-3a
+  ap-northeast-3b
+  ap-northeast-3c
 ```
 
-実AWSの物理AZ ID / accountごとのAZ name mappingを再現することは初期要件としない。
+AZ名は学習用の安定した論理値として扱い、実AWS AccountごとのAZ name / AZ ID mappingそのものを再現することは初期要件としない。
 
 ### 4.6.4 ARN / Resource Identifier
 
@@ -772,6 +787,60 @@ S3、IAM、Route 53等、AWSでRegion/Account部分の扱いが異なるサー�
 ARN生成を各UIやProviderへ分散実装せず、共通 `ArnFactory` / resource naming libraryを使用する。
 
 Providerが異なっても同一Workspace内では同じvirtualAccountId / region namespaceを利用する。
+
+### 4.6.5 Virtual Multi-Region / DR Learning
+
+東京・大阪の2 Virtual Regionを利用して、実AWSのMulti-Region / Disaster Recovery設計・運用を学習できるようにする。
+
+学習対象:
+
+- Backup and Restore
+- Pilot Light
+- Warm Standby
+- Active / Passive Failover
+- Multi-Region Active / Active
+- RPO / RTO設計
+- Route 53 Failover Routing / Health Check
+- S3 Cross-Region Replication相当
+- DynamoDB Global Tables相当
+- Aurora Global Database / cross-region failover相当
+- IaCによるSecondary Region構築
+- Regional outage時の切替・復旧・failback
+
+DR scenarioのPrimaryは原則東京、Recovery Regionは大阪とする。ただし教材によりPrimary/Secondaryを逆転可能とする。
+
+#### Regional Fault Injection
+
+Virtual Region障害はPlatformの物理AWS Region障害を発生させるのではなく、LabWorkspace内のFault Injectionとして再現する。
+
+```text
+Fault: ap-northeast-1 unavailable
+        ↓
+Lab Gateway
+  ├ Tokyo regional APIs -> RegionUnavailable
+  ├ Tokyo data plane    -> unavailable
+  ├ Global services     -> continue
+  └ Osaka resources     -> continue
+```
+
+Fault InjectionはWorkspace単位であり、他利用者LabやPlatform Control Planeへ影響させない。
+
+#### Replication Semantics
+
+Cross-Region replicationはserviceごとにCapabilityとして定義する。
+
+- configuration-only
+- asynchronous-data
+- synchronous-simulated
+- unsupported
+
+非同期replicationでは意図的なlag、replication停止、backlogをFault Injection可能とし、RPOの意味を学習できるようにする。
+
+#### DR LearningとPlatform DRの分離
+
+このVirtual Multi-Region機能は**AWS DR学習のための論理シミュレーション**であり、AWS Internal Labサービス自体の物理DRを意味しない。
+
+Platform自身の可用性・物理Region障害対策は別途「可用性・DR設計」で定義する。
 
 ## 4.7 Lab Gateway / Provider Routing
 
