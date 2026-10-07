@@ -95,6 +95,10 @@ export function createLabGatewayServer(input: {
         quiescing = true;
         const drained = await waitForDrain();
         if (!drained) {
+          // Quiesce did not complete, so fail back to normal admission.
+          // Otherwise the Worker sees a failed admin call and cannot know that
+          // the Gateway already flipped its local quiescing flag.
+          quiescing = false;
           json(response, 503, {
             error: { code: "QUIESCE_TIMEOUT" },
             activeInvocations,
