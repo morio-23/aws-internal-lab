@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS app_user (
   id uuid PRIMARY KEY,
   external_subject text NOT NULL UNIQUE,
@@ -17,5 +15,3 @@ CREATE TABLE IF NOT EXISTS role_assignment (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, role)
 );
-
-COMMIT;
