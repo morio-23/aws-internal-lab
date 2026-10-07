@@ -368,21 +368,167 @@ Advanced microVMは任意値ではなく固定profileから割り当てる。
 
 Host OS / Worker Agent / hypervisor用に15〜20%程度のCPU/Memory余力を確保し、全capacityをguestへ割り当てない。
 
-### 4.4.5 Placement / Bin Packing
+### 4.4.5 Advanced Capacity Unit
+
+Advanced Runtimeの容量判定はLab数ではなく `Advanced Capacity Unit (ACU)` で統一する。
+
+初期値:
+
+| microVM Profile | ACU | vCPU | Memory |
+| --- | ---: | ---: | ---: |
+| small | 1 | 1 | 2 GiB |
+| medium | 2 | 2 | 4 GiB |
+| large | 4 | 4 | 8 GiB |
+
+Worker側も安全に収容できるACUを定義する。以下はNested Virtualization対応C7i系を用いた初期候補であり、Phase 0 benchmark後に確定する。
+
+| Worker Class | EC2候補 | Raw | Usable ACU目安 |
+| --- | --- | --- | ---: |
+| W1 | c7i.large | 2 vCPU / 4 GiB | 1 |
+| W3 | c7i.xlarge | 4 vCPU / 8 GiB | 3 |
+| W6 | c7i.2xlarge | 8 vCPU / 16 GiB | 6 |
+| W12 | c7i.4xlarge | 16 vCPU / 32 GiB | 12 |
+
+Usable ACUはHost OS / Worker Agent / KVM / Firecracker用余力を差し引いた値として管理し、Raw vCPU/Memoryだけから動的に過剰割当しない。
+
+### 4.4.6 Placement / Bin Packing
 
 Lab Control Plane内のAdvanced Schedulerが配置を決定する。
 
-1. 要求profileを収容可能なReady Workerを検索する。
-2. memoryを第一制約、vCPUを第二制約としてbin-packする。
-3. 収容可能なWorkerが複数ある場合は残余capacityが最小となるWorkerを優先する。
-4. 収容先がない場合はASGをscale outする。
-5. Worker Ready後にmicroVMを起動する。
+1. 要求ProfileをACUへ変換する。
+2. 要求ACUを収容可能なReady Workerを検索する。
+3. memoryを第一制約、vCPUを第二制約としてbest-fit bin-packする。
+4. 収容可能なWorkerが複数ある場合は、配置後の残余ACUが最小となるWorkerを優先する。
+5. Placementできない場合はWorker Fleet PlannerへScale Outを要求する。
+6. Worker Ready後にmicroVMを起動する。
 
-Workerごとに最大microVM数もHard Limitとして持つ。
+Workerごとに `maxMicroVmsPerWorker` もHard Limitとして持つ。初期値は8とし、Host障害時のblast radiusを制限する。
 
-Scale Inはactive microVMが0のWorkerのみを対象とし、drain完了後にTerminateする。初期リリースではmicroVMのlive migrationは行わない。
+### 4.4.7 Worker Fleet Auto Scaling
 
-### 4.4.6 Standard → Advanced昇格
+Worker Fleetは固定instance type 1種類ではなく、W1/W3/W6/W12のWorker Classから自動構成する。
+
+#### 容量計算
+
+```text
+requiredUnits =
+    activeUnits
+  + startingUnits
+  + pendingUnits
+  + reserveUnits
+```
+
+初期の `reserveUnits` は以下とする。
+
+| active + starting ACU | reserveUnits |
+| ---: | ---: |
+| 0 - 3 | 0 |
+| 4 - 6 | 1 |
+| 7 - 12 | 2 |
+| 13以上 | max(2, ceil(activeUnits × 15%)) |
+
+少数利用時に予備EC2を常時起動してコストを増やさず、利用が増えた場合のみheadroomを確保する。
+
+#### Scale Out
+
+以下のいずれかで即時Scale Out判定する。
+
+- `pendingUnits > freeUsableUnits`
+- 新規microVMのplacementに失敗した
+- Fleet全体の `allocatedUnits / usableUnits >= 80%` が5分継続した
+
+Scale Out時は、`requiredUnits` を満たすWorker Classの組合せを候補化し、**見積時間単価が最小となる組合せ**を選択する。同額の場合はWorker台数が少ない構成を優先する。ただし `maxMicroVmsPerWorker` と障害影響上限を超えない。
+
+EC2単価は設定値として保持し、instance type変更や価格改定時に閾値ロジックを書き換えず再計算できる構造とする。
+
+#### Scale In
+
+Workerが以下をすべて満たした場合、Scale In候補とする。
+
+- active microVM = 0
+- starting microVM = 0
+- drain中でない
+- 15分以上idle
+- 当該Workerを削除しても `requiredUnits` を満たす
+
+候補Workerをdrainingへ遷移し、新規placementを停止してTerminateする。
+
+#### Consolidation
+
+Fleet全体の利用率が45%未満の状態が30分継続した場合、Fleet Plannerはより低コストなWorker構成を計算する。
+
+ただし初期リリースでは、**利用中microVMをコスト最適化のためだけに強制移動しない。**
+
+- 新規Labは新しい最適Workerへ配置
+- 旧Workerはdrainingとして新規配置を停止
+- 既存LabがSuspend/Stopして空になった時点でTerminate
+
+これによりコスト最適化による利用者セッション中断を防ぐ。
+
+#### Hysteresis
+
+Scale Out 80% / Consolidation 45% と異なる閾値を利用し、短時間の負荷変動によるScale Out/Scale Inの反復を防ぐ。
+
+Worker Fleet Plannerはイベント駆動に加え1分周期で再評価する。
+
+### 4.4.8 Standard / Advanced 自動切替
+
+Service Capabilityに `runtimeRequirement = standard | advanced` を持たせる。
+
+Standard Runtime上で `advanced` 必須Operationが要求された場合、利用者に別Lab作成を要求せず、自動的にRuntime Promotionを開始する。
+
+```text
+Advanced operation requested
+   ↓
+Operation = waiting_for_runtime
+   ↓
+Workspace mutation lock
+   ↓
+Standard quiesce / Snapshot
+   ↓
+Fargate stop
+   ↓
+Advanced capacity allocation
+   ↓
+microVM restore
+   ↓
+original operation retry
+   ↓
+ready
+```
+
+Promotion自体を非同期OperationとしてAuditし、失敗時は元Snapshotを保持する。
+
+Advanced Runtime上でAdvanced必須resource/workloadがすべてなくなった場合は `standardEligible=true` とする。
+
+利用者操作中に自動Downgradeしてセッションを中断しない。以下のいずれかでStandardへ戻す。
+
+- 次回の明示Suspend後のResume
+- Idle timeoutによる自動Suspend後のResume
+- 利用者が「Standardへ最適化」を明示実行
+
+Resume時に `standardEligible=true` であればFargateへ復元し、Advanced microVM capacityを解放する。
+
+### 4.4.9 Cost Guardrail
+
+Worker Fleetについて以下を設定可能とする。
+
+- `minWorkers`: 初期値0
+- `maxWorkers`: 環境別上限
+- `maxTotalACU`: 全体Advanced容量上限
+- `maxACUPerUser`: 利用者上限
+- `maxMicroVmsPerWorker`: 初期値8
+- `scaleOutUtilization`: 80%
+- `consolidationUtilization`: 45%
+- `workerIdleTerminateMinutes`: 15
+- `consolidationHoldMinutes`: 30
+- `headroomPercent`: 15%
+
+Business hours等で起動待ち時間を短縮したい場合のみ、scheduleベースの `warmReserveUnits` を設定可能とする。初期値は0とし、コストを優先する。
+
+
+
+### 4.4.10 Standard → Advanced昇格
 
 Advanced-only機能を初めて利用する場合、同じLabWorkspaceを別Runtimeへ移行する。
 
@@ -418,7 +564,7 @@ Virtual AWS Account ID、Region、ARN namespace、LabWorkspace IDは変更しな
 
 Advanced → Standardへの自動降格は初期リリースでは行わない。
 
-### 4.4.7 Network Isolation
+### 4.4.11 Network Isolation
 
 各microVMは専用network namespace / TAPを持つ。
 
@@ -434,7 +580,7 @@ Advanced → Standardへの自動降格は初期リリースでは行わない�
 
 外部接続が必要な学習シナリオはLab-aware Egress Proxy経由とする。
 
-### 4.4.8 Storage
+### 4.4.12 Storage
 
 Worker Hostには暗号化EBS data volumeを配置し、Labごとに専用data disk imageを作成する。
 
@@ -444,7 +590,7 @@ Worker Hostには暗号化EBS data volumeを配置し、Labごとに専用data d
 - Suspend完了後はSnapshot Storeへexport後にlocal copyを削除
 - Worker Terminate時はEBSをDeleteOnTerminationとする
 
-### 4.4.9 Advanced Snapshot
+### 4.4.13 Advanced Snapshot
 
 Advanced SnapshotはmicroVM memoryのcheckpointではなく、AWS resource stateと必要なData Plane storageを保存する。
 
@@ -477,7 +623,7 @@ Compatibility MatrixのSnapshot区分は最終的に以下へ拡張する。
 - partial
 - none
 
-### 4.4.10 Worker障害
+### 4.4.14 Worker障害
 
 Advanced Runtime自体はHAとしない。
 
@@ -488,7 +634,7 @@ Worker Host障害時:
 - 最新Snapshotがあれば別WorkerへResume可能とする
 - 未Snapshot変更の消失はLabの非永続性として許容する
 
-### 4.4.11 ADR
+### 4.4.15 ADR
 
 本設計判断の詳細は `docs/adr/0001-shared-advanced-worker-pool.md` を参照する。
 
@@ -583,6 +729,9 @@ MiniStackのMIT Licenseの著作権表示・許諾表示を保持する。
 | enabled | 提供可否 |
 | maxLevel | L1/L2/L3 |
 | runtimeType | standard / advanced |
+| runtimeRequirement | Operation実行に必要なRuntime。standard / advanced |
+| capacityProfile | Advanced時のsmall / medium / large |
+| capacityUnits | Advanced Capacity Unit |
 | provider | ministack / internal / other |
 | testedVersion | 検証済MiniStack version |
 | knownLimitations | 既知差異 |
