@@ -10,7 +10,7 @@
 
 ## 1. 目的
 
-本書は、AWS Internal Lab が対象とする現行AWSサービスについて、どの学習レイヤーまで提供するか、Standard / Advanced のどのRuntimeで扱うか、MiniStackで現在利用可能か、Snapshot/Resumeをどの程度提供できるかを一元管理する正本である。
+本書は、AWS Internal Lab が対象とする現行AWSサービスについて、どの学習レイヤーまで提供するか、Standard / Advanced のどのRuntimeで扱うか、MiniStackで現在利用可能か、Snapshot/Resumeをどの程度提供できるか、東京 `ap-northeast-1` / 大阪 `ap-northeast-3` のどちらで提供するかを一元管理する正本である。
 
 企画上の「可能な限り全AWSサービスを対象とする」を、サービス単位の実装計画へ落とすために使用する。
 
@@ -400,6 +400,8 @@ testedEngineVersion: null
 consoleVerifiedAt: null
 knownLimitations: []
 ```
+
+Regional serviceについては、実AWSのRegion Availabilityに合わせて `supportedVirtualRegions` を設定する。実AWSで大阪未提供のサービスをLabだけ大阪で有効化しない。DR教材は両Region対応サービスを中心に構成する。
 
 実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を管理し、**TargetとCurrent implementationを分離**する。`scope` で global / regional を管理し、regional serviceは `supportedVirtualRegions` で東京 `ap-northeast-1` / 大阪 `ap-northeast-3` の対応を管理する。`replicationSupport` は none / configuration-only / asynchronous-data / synchronous-simulated を取り、`regionalFaultInjection` と合わせてDR教材可否を表す。`providerRoutes` はOperation単位で MiniStack / Internal / Reference / Deny を指定する。Advanced対応Operationでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` を管理し、Worker Fleet PlannerのACU計算に利用する。Cross-provider連携では `integrationOwner` を持ち、MiniStack native integrationとIntegration Bridgeの二重実行を防ぐ。
 
