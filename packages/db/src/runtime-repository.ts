@@ -12,6 +12,7 @@ export type ActiveRuntimeRecord = {
   runtimeStatus: string;
   providerRef: string | null;
   privateEndpoint: string | null;
+  stateVolumeRef: string | null;
   virtualAccountId: string;
   enabledRegions: readonly VirtualRegion[];
 };
@@ -25,6 +26,7 @@ type ActiveRuntimeRow = {
   runtime_status: string;
   provider_ref: string | null;
   private_endpoint: string | null;
+  state_volume_ref: string | null;
   virtual_account_id: string;
   enabled_regions: VirtualRegion[] | string;
 };
@@ -43,6 +45,7 @@ function mapRuntime(row: ActiveRuntimeRow): ActiveRuntimeRecord {
     runtimeStatus: row.runtime_status,
     providerRef: row.provider_ref,
     privateEndpoint: row.private_endpoint,
+    stateVolumeRef: row.state_volume_ref,
     virtualAccountId: row.virtual_account_id,
     enabledRegions,
   };
@@ -96,6 +99,7 @@ export async function createStartingStandardRuntime(input: {
         runtimeStatus: "starting",
         providerRef: null,
         privateEndpoint: null,
+        stateVolumeRef: null,
         virtualAccountId: workspace.virtual_account_id,
         enabledRegions:
           typeof workspace.enabled_regions === "string"
@@ -113,6 +117,7 @@ export async function markStandardRuntimeReady(input: {
   runtimeId: string;
   providerRef: string;
   privateEndpoint?: string;
+  stateVolumeRef?: string;
 }): Promise<void> {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
@@ -121,6 +126,7 @@ export async function markStandardRuntimeReady(input: {
         UPDATE lab_runtime r
         SET provider_ref = ${input.providerRef},
             private_endpoint = ${input.privateEndpoint ?? null},
+            state_volume_ref = ${input.stateVolumeRef ?? null},
             status = 'ready',
             heartbeat_at = now()
         FROM lab_session s
@@ -154,6 +160,7 @@ export async function getActiveRuntimeForWorkspace(input: {
         r.status AS runtime_status,
         r.provider_ref,
         r.private_endpoint,
+        r.state_volume_ref,
         w.virtual_account_id,
         w.enabled_regions
       FROM lab_workspace w
@@ -240,6 +247,7 @@ export async function listActiveStandardRuntimes(input: {
         r.status AS runtime_status,
         r.provider_ref,
         r.private_endpoint,
+        r.state_volume_ref,
         w.virtual_account_id,
         w.enabled_regions
       FROM lab_workspace w
