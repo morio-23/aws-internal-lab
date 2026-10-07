@@ -26,7 +26,7 @@ async function waitForRuntimeReady(input: {
   taskArn: string;
   attempts?: number;
   intervalMs?: number;
-}): Promise<{ privateIpv4Address: string }> {
+}): Promise<{ privateIpv4Address: string; stateVolumeId: string }> {
   const attempts = input.attempts ?? 60;
   const intervalMs = input.intervalMs ?? 2_000;
 
@@ -40,8 +40,15 @@ async function waitForRuntimeReady(input: {
       );
     }
 
-    if (inspection.state === "running" && inspection.privateIpv4Address) {
-      return { privateIpv4Address: inspection.privateIpv4Address };
+    if (
+      inspection.state === "running" &&
+      inspection.privateIpv4Address &&
+      inspection.stateVolumeId
+    ) {
+      return {
+        privateIpv4Address: inspection.privateIpv4Address,
+        stateVolumeId: inspection.stateVolumeId,
+      };
     }
 
     if (attempt + 1 < attempts) {
@@ -109,6 +116,7 @@ export async function executeStandardRuntimeOperation(input: {
         runtimeId: runtime.runtimeId,
         providerRef: taskArn,
         privateEndpoint,
+        stateVolumeRef: ready.stateVolumeId,
       });
 
       await setOperationStatus({
