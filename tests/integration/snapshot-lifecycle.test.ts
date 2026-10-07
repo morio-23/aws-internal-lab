@@ -139,8 +139,10 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
   const manifestStore = new MemoryManifestStore();
   const gatewayAdmin = {
     quiesced: 0,
+    persisted: 0,
     unquiesced: 0,
     async quiesce() { this.quiesced += 1; },
+    async persist() { this.persisted += 1; },
     async unquiesce() { this.unquiesced += 1; },
   };
 
@@ -197,6 +199,7 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
   assert.deepEqual(snapshotManager.createdFromVolumes, ["vol-snapshot-1"]);
   assert.deepEqual(snapshotManager.deletedVolumes, ["vol-snapshot-1"]);
   assert.equal(gatewayAdmin.quiesced, 1);
+  assert.equal(gatewayAdmin.persisted, 1);
   assert.equal(gatewayAdmin.unquiesced, 0);
 
   const snapshot = await getAvailableSnapshotForWorkspace({
