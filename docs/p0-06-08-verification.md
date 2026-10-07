@@ -36,7 +36,7 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/unquie
 - PlatformOperationsStackを追加し、SQS FIFO operation queue、FIFO DLQ、immutable ECR Worker repositoryをIaC化。
 - Managed EBS volumeへ `ManagedBy` / `WorkspaceId` / `SessionId` tagを付与。
 - Reconcilerへ、DB上activeでない・`available`・grace期間超過のmanaged EBS volume削除を追加。
-- Gateway quiesce/drain protocolを追加。新規操作停止とin-flight=0をunit test対象とした。
+- Gateway quiesce/drain protocolを追加。新規操作停止とin-flight=0をunit test対象とし、Operation WorkerのSuspend処理からquiesceを呼ぶよう結線した。
 
 ## 実AWS Smoke Testチェックリスト
 
@@ -57,7 +57,7 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/unquie
 
 1. ADR-0005の接続方式は確定しRuntime側IaCも追加したが、Platform側VPC Peering作成・reciprocal route・BFF SGのIaCは未実装。実AWS疎通は未確認。
 2. SQS FIFO/DLQとWorker用ECRはPlatformOperationsStackへ追加した。Operation Worker ECS Service、Task Role、DB secret/network、Queue権限、Runtime Accountへの権限委譲は未整備。
-3. Gatewayのquiesce/drainは実装済みだが、Operation WorkerのSuspend flowとは未結線。MiniStackは現行仕様上 `PERSIST_STATE=1` のstate saveをshutdown時に行うため、live flush APIは現時点で利用できない。したがって現在のstop→snapshot方式ではSnapshot作成失敗時に元Taskを維持できず、Issue #9のAcceptanceを完全には満たさない。
+3. Gatewayのquiesce/drainはOperation WorkerのSuspend flowまで結線済み。新規invoke停止とin-flight=0の後にTask停止へ進む。一方、MiniStackは現行仕様上 `PERSIST_STATE=1` のstate saveをshutdown時に行うため、live flush APIは現時点で利用できない。したがって現在のquiesce→stop→snapshot方式ではSnapshot作成失敗時に元Taskを維持できず、Issue #9のAcceptanceを完全には満たさない。
 4. Managed EBS volumeへの所有tagとorphan cleanupは実装したが、実ECS managed EBSでtag/status/削除が想定通りになることはAWS Smokeで確認が必要。
 5. EBS Snapshot作成、task volume attach、Fargate上のMiniStack graceful shutdown、Endpoint経由image pullは実AWSで未確認。Issue #9はOpenのまま維持する。
 6. P0-08をapplication-consistentかつ失敗時非破壊にするには、MiniStackへ明示的なpersist/flush endpointを追加するinternal patch/upstream提案、またはSnapshot protocolの再設計が必要。
