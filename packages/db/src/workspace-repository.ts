@@ -28,20 +28,25 @@ type WorkspaceRow = {
   virtual_account_id: string;
   partition_name: "aws";
   primary_virtual_region: VirtualRegion;
-  enabled_regions: VirtualRegion[];
+  enabled_regions: VirtualRegion[] | string;
   status: string;
   standard_eligible: boolean;
   lifecycle_version: string | number;
 };
 
 function mapWorkspace(row: WorkspaceRow): LabWorkspaceRecord {
+  const enabledRegions =
+    typeof row.enabled_regions === "string"
+      ? (JSON.parse(row.enabled_regions) as VirtualRegion[])
+      : row.enabled_regions;
+
   return {
     id: row.id,
     ownerUserId: row.owner_user_id,
     virtualAccountId: row.virtual_account_id,
     partition: row.partition_name,
     primaryVirtualRegion: row.primary_virtual_region,
-    enabledRegions: row.enabled_regions,
+    enabledRegions,
     status: row.status,
     standardEligible: row.standard_eligible,
     lifecycleVersion: Number(row.lifecycle_version),
