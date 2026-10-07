@@ -8,6 +8,7 @@ import {
   type ProviderAdapter,
 } from "./index.js";
 import type { CapabilityRegistry } from "../../../packages/service-capabilities/src/index.js";
+import { verifyRuntimeToken } from "../../../packages/runtime-auth/src/index.js";
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json" });
@@ -27,6 +28,7 @@ export function createLabGatewayServer(input: {
   binding: LabBinding;
   providers: readonly ProviderAdapter[];
   registry?: CapabilityRegistry;
+  platformPublicKeyPem?: string;
 }) {
   return createServer(async (request, response) => {
     try {
@@ -40,7 +42,49 @@ export function createLabGatewayServer(input: {
         return;
       }
 
-      const body = (await readJsonBody(request)) as LabGatewayRequest;
+      const rawBody = (await readJsonBody(request)) as Partial<LabGatewayRequest>;
+      const authorization = request.headers.authorization;
+      let body: LabGatewayRequest;
+
+      if (
+        input.platformPublicKeyPem &&
+        authorization?.startsWith("Bearer ")
+      ) {
+        const token = authorization.slice("Bearer ".length);
+        verifyRuntimeToken({
+          token,
+          publicKeyPem: input.platformPublicKeyPem,
+          expectedWorkspaceId: input.binding.workspaceId,
+          expectedSessionId: input.binding.sessionId,
+          expectedVirtualAccountId: input.binding.virtualAccountId,
+        });
+
+        if (
+          typeof rawBody.virtualRegion !== "string" ||
+          typeof rawBody.serviceCode !== "string" ||
+          typeof rawBody.operation !== "string" ||
+          typeof rawBody.correlationId !== "string"
+        ) {
+          json(response, 400, { error: { code: "INVALID_REQUEST" } });
+          return;
+        }
+
+        body = {
+          workspaceId: input.binding.workspaceId,
+          sessionId: input.binding.sessionId,
+          virtualAccountId: input.binding.virtualAccountId,
+          virtualRegion: rawBody.virtualRegion,
+          serviceCode: rawBody.serviceCode,
+          operation: rawBody.operation,
+          ...(rawBody.payload === undefined ? {} : { payload: rawBody.payload }),
+          accessKeyId: input.binding.credential.accessKeyId,
+          secretAccessKey: input.binding.credential.secretAccessKey,
+          correlationId: rawBody.correlationId,
+        };
+      } else {
+        body = rawBody as LabGatewayRequest;
+      }
+
       const result = await dispatchLabRequest({
         binding: input.binding,
         request: body,
@@ -64,6 +108,30 @@ export function createLabGatewayServer(input: {
         json(response, status, {
           error: {
             code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (
+        error instanceof Error &&
+        error.message.startsWith("INVALID_RUNTIME_TOKEN")
+      ) {
+        json(response, 401, {
+          error: {
+            code: "INVALID_PLATFORM_TOKEN",
+          },
+        });
+        return;
+      }
+
+      if (
+        error instanceof Error &&
+        error.message === "RUNTIME_TOKEN_EXPIRED"
+      ) {
+        json(response, 401, {
+          error: {
+            code: "PLATFORM_TOKEN_EXPIRED",
           },
         });
         return;
