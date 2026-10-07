@@ -36,9 +36,7 @@ export interface StandardRuntimeProvisioner {
 type EcsSender = {
   send(
     command: RunTaskCommand | StopTaskCommand | DescribeTasksCommand,
-  ): Promise<
-    RunTaskCommandOutput | StopTaskCommandOutput | DescribeTasksCommandOutput
-  >;
+  ): Promise<unknown>;
 };
 
 export type EcsStandardRuntimeProvisionerConfig = {
@@ -71,7 +69,18 @@ export class EcsStandardRuntimeProvisioner
       throw new Error("Standard Runtime requires at least one security group");
     }
 
-    this.#client = config.client ?? new ECSClient(config.clientConfig ?? {});
+    if (config.client) {
+      this.#client = config.client;
+    } else {
+      const ecs = new ECSClient(config.clientConfig ?? {});
+      this.#client = {
+        async send(command) {
+          if (command instanceof RunTaskCommand) return ecs.send(command);
+          if (command instanceof StopTaskCommand) return ecs.send(command);
+          return ecs.send(command);
+        },
+      };
+    }
     this.#clusterArn = config.clusterArn;
     this.#taskDefinitionArn = config.taskDefinitionArn;
     this.#subnetIds = config.subnetIds;
