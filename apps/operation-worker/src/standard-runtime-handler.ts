@@ -5,6 +5,7 @@ import {
 import {
   createStandardSnapshotRecord,
   getAvailableSnapshotForWorkspace,
+  listProtectedStandardSnapshotIds,
   markSnapshotFailed,
   markSnapshotRestored,
   markStandardSnapshotAvailable,
@@ -564,6 +565,32 @@ export async function cleanupOrphanStandardVolumes(input: {
   return { inspected: volumes.length, deleted };
 }
 
+export async function cleanupOrphanStandardSnapshots(input: {
+  snapshotManager: StandardSnapshotManager;
+  protectedLabSnapshotIds: readonly string[];
+  now?: Date;
+  graceMs?: number;
+}): Promise<{ inspected: number; deleted: number }> {
+  const snapshots = await input.snapshotManager.listManagedSnapshots();
+  const protectedIds = new Set(input.protectedLabSnapshotIds);
+  const now = input.now ?? new Date();
+  const graceMs = input.graceMs ?? 60 * 60_000;
+  let deleted = 0;
+
+  for (const snapshot of snapshots) {
+    if (protectedIds.has(snapshot.labSnapshotId)) continue;
+    if (now.getTime() - snapshot.startTime.getTime() < graceMs) continue;
+    try {
+      await input.snapshotManager.deleteSnapshot(snapshot.snapshotId);
+      deleted += 1;
+    } catch {
+      // Reconciliation is best effort. A later cycle retries managed snapshots.
+    }
+  }
+
+  return { inspected: snapshots.length, deleted };
+}
+
 export async function reconcileStandardRuntimes(input: {
   databaseUrl: string;
   provisioner: StandardRuntimeProvisioner;
@@ -573,6 +600,7 @@ export async function reconcileStandardRuntimes(input: {
   failed: number;
   orphanTasksStopped: number;
   orphanVolumesDeleted: number;
+  orphanSnapshotsDeleted: number;
 }> {
   const runtimes = await listActiveStandardRuntimes({
     databaseUrl: input.databaseUrl,
@@ -620,10 +648,21 @@ export async function reconcileStandardRuntimes(input: {
       })
     : { inspected: 0, deleted: 0 };
 
+  const snapshotCleanup = input.snapshotManager
+    ? await cleanupOrphanStandardSnapshots({
+        snapshotManager: input.snapshotManager,
+        protectedLabSnapshotIds: await listProtectedStandardSnapshotIds({
+          databaseUrl: input.databaseUrl,
+          creatingNewerThan: new Date(Date.now() - 60 * 60_000),
+        }),
+      })
+    : { inspected: 0, deleted: 0 };
+
   return {
     checked: runtimes.length,
     failed,
     orphanTasksStopped: cleanup.stopped,
     orphanVolumesDeleted: volumeCleanup.deleted,
+    orphanSnapshotsDeleted: snapshotCleanup.deleted,
   };
 }
