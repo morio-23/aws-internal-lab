@@ -28,6 +28,7 @@ test("Fargate provisioner launches a private task bound to workspace identity", 
     taskDefinitionArn: "task-def-arn",
     subnetIds: ["subnet-a", "subnet-b"],
     securityGroupIds: ["sg-runtime"],
+    ebsInfrastructureRoleArn: "arn:aws:iam::123456789012:role/ecs-ebs",
     client,
   });
 
@@ -51,6 +52,21 @@ test("Fargate provisioner launches a private task bound to workspace identity", 
     ["subnet-a", "subnet-b"],
   );
   assert.equal(input.enableExecuteCommand, false);
+  assert.deepEqual(input.volumeConfigurations, [
+    {
+      name: "lab-state",
+      managedEBSVolume: {
+        roleArn: "arn:aws:iam::123456789012:role/ecs-ebs",
+        volumeType: "gp3",
+        encrypted: true,
+        filesystemType: "ext4",
+        terminationPolicy: {
+          deleteOnTermination: false,
+        },
+        sizeInGiB: 8,
+      },
+    },
+  ]);
   assert.equal(
     input.tags?.some(
       (tag) => tag.key === "WorkspaceId" && tag.value === "workspace-1",
@@ -98,6 +114,7 @@ test("Fargate provisioner stops and inspects tasks", async () => {
     taskDefinitionArn: "task-def-arn",
     subnetIds: ["subnet-a", "subnet-b"],
     securityGroupIds: ["sg-runtime"],
+    ebsInfrastructureRoleArn: "arn:aws:iam::123456789012:role/ecs-ebs",
     client,
   });
 
@@ -118,6 +135,7 @@ test("Fargate provisioner rejects a single-subnet configuration", () => {
         taskDefinitionArn: "task-def-arn",
         subnetIds: ["subnet-a"],
         securityGroupIds: ["sg-runtime"],
+        ebsInfrastructureRoleArn: "arn:aws:iam::123456789012:role/ecs-ebs",
         client: { async send() { return {}; } },
       }),
     /at least two AZs/,
