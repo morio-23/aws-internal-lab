@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/unit/bootstrap.test.ts tests/unit/aws-virtual.test.ts tests/unit/auth.test.ts",
+    "test": "node --import tsx --test tests/unit/bootstrap.test.ts tests/unit/aws-virtual.test.ts tests/unit/auth.test.ts tests/unit/control-plane-server.test.ts",
     "lint": "eslint apps packages tests scripts",
     "check": "pnpm lint && pnpm boundaries && pnpm typecheck && pnpm test && pnpm build && pnpm build:web",
     "boundaries": "node scripts/check-boundaries.mjs",
