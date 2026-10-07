@@ -26,8 +26,10 @@ test("gateway admin signs quiesce calls and only targets the Runtime VPC endpoin
     virtualAccountId: "012345678901",
   };
   await admin.quiesce(identity);
+  await admin.persist(identity);
 
   assert.equal(seen[0]?.url, "http://10.30.1.20:8080/admin/quiesce");
+  assert.equal(seen[1]?.url, "http://10.30.1.20:8080/admin/persist");
   assert.match(seen[0]?.authorization ?? "", /^Bearer /);
   verifyRuntimeToken({
     token: (seen[0]?.authorization ?? "").slice("Bearer ".length),
