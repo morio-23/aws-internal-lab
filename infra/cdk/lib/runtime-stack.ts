@@ -1,6 +1,7 @@
 import {
   CfnOutput,
   CfnParameter,
+  Duration,
   RemovalPolicy,
   Stack,
   type StackProps,
@@ -10,6 +11,8 @@ import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as kms from "aws-cdk-lib/aws-kms";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 export class RuntimeStack extends Stack {
@@ -74,6 +77,27 @@ export class RuntimeStack extends Stack {
     const cluster = new ecs.Cluster(this, "StandardCluster", {
       vpc,
       containerInsightsV2: ecs.ContainerInsights.ENHANCED,
+    });
+
+    const snapshotKey = new kms.Key(this, "SnapshotKey", {
+      enableKeyRotation: true,
+      description: "Phase 0 snapshot manifest encryption key",
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const snapshotBucket = new s3.Bucket(this, "SnapshotBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.KMS,
+      encryptionKey: snapshotKey,
+      enforceSSL: true,
+      versioned: false,
+      lifecycleRules: [
+        {
+          id: "expire-prototype-snapshots",
+          expiration: Duration.days(30),
+        },
+      ],
+      autoDeleteObjects: true,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
 
     const gatewayRepository = new ecr.Repository(this, "LabGatewayRepository", {
@@ -209,6 +233,20 @@ export class RuntimeStack extends Stack {
         resources: ["*"],
       }),
     );
+    orchestratorRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "ec2:CreateSnapshot",
+          "ec2:DescribeSnapshots",
+          "ec2:DeleteSnapshot",
+          "ec2:DeleteVolume",
+          "ec2:DescribeVolumes",
+        ],
+        resources: ["*"],
+      }),
+    );
+    snapshotBucket.grantReadWrite(orchestratorRole);
+    snapshotKey.grantEncryptDecrypt(orchestratorRole);
 
     new CfnOutput(this, "RuntimeVpcId", { value: vpc.vpcId });
     new CfnOutput(this, "StandardClusterArn", { value: cluster.clusterArn });
@@ -232,6 +270,12 @@ export class RuntimeStack extends Stack {
     });
     new CfnOutput(this, "MiniStackMirrorRepositoryUri", {
       value: ministackRepository.repositoryUri,
+    });
+    new CfnOutput(this, "SnapshotBucketName", {
+      value: snapshotBucket.bucketName,
+    });
+    new CfnOutput(this, "SnapshotKeyArn", {
+      value: snapshotKey.keyArn,
     });
   }
 }
