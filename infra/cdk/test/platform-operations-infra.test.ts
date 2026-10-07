@@ -13,7 +13,7 @@ test("PlatformOperationsStack creates FIFO operation queue, DLQ and immutable wo
   template.resourceCountIs("AWS::SQS::Queue", 2);
   template.hasResourceProperties("AWS::SQS::Queue", {
     FifoQueue: true,
-    VisibilityTimeout: 300,
+    VisibilityTimeout: 900,
     ReceiveMessageWaitTimeSeconds: 20,
     RedrivePolicy: Match.objectLike({
       maxReceiveCount: 5,
