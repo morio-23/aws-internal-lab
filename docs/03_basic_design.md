@@ -683,6 +683,313 @@ LabSnapshotProvider
  └ deleteSnapshot()
 ```
 
+## 4.6 LabWorkspace / 仮想AWS環境
+
+LabWorkspace を利用者が継続利用する論理AWS環境の正本とする。LabSession / LabRuntime はWorkspaceを一時的に実行するための実体であり、Suspend / Resume、Standard / Advanced切替で入れ替わってもWorkspaceの論理IDは変えない。
+
+```text
+LabWorkspace
+  ├ workspaceId
+  ├ ownerUserId
+  ├ virtualAccountId
+  ├ partition = aws
+  ├ defaultRegion
+  ├ enabledRegions[]
+  ├ activeSessionId
+  ├ currentSnapshotId
+  └ standardEligible
+          │
+          ├ LabSession #1 / Standard Fargate
+          ├ Snapshot
+          └ LabSession #2 / Advanced microVM
+```
+
+### 4.6.1 Virtual AWS Account ID
+
+Workspace作成時に12桁数字の `virtualAccountId` を払い出す。
+
+- Platform内で一意とする。
+- 利用者ID、社員番号等を埋め込まない。
+- cryptographically secure randomで生成する。
+- Workspace存続中は変更しない。
+- Workspace削除後も意図的に再利用しない。
+- 実AWS Account IDではなくLab内だけで有効な識別子とする。
+
+例:
+
+```text
+382615904271
+```
+
+MiniStackへLab SDK requestを送る場合もこのIDを仮想Accountとして使用する。
+
+### 4.6.2 Virtual Region
+
+物理RuntimeのAWS Regionと、利用者がConsole上で選択するVirtual Regionを分離する。
+
+初期default:
+
+```text
+ap-northeast-1
+```
+
+設計上は複数Virtual Regionを同一Workspaceで扱えるものとする。
+
+- Regional service stateは `virtualAccountId + virtualRegion + service` で分離する。
+- Global serviceはRegion非依存として扱う。
+- UIのRegion selectorはVirtual Regionを変更する。
+- Physical Runtimeが東京Regionに存在していても、Virtual Regionが `us-east-1` 等の場合がある。
+- AWS実環境のRegion availabilityとの差異はCompatibility Matrixで管理する。
+
+初期提供RegionはConfiguration as Codeのallowlistとし、段階的に拡大する。
+
+### 4.6.3 Availability Zone
+
+AZは学習用の論理値としてVirtual Regionごとに提供する。
+
+例:
+
+```text
+ap-northeast-1a
+ap-northeast-1b
+ap-northeast-1c
+```
+
+実AWSの物理AZ ID / accountごとのAZ name mappingを再現することは初期要件としない。
+
+### 4.6.4 ARN / Resource Identifier
+
+ARNは可能な限りAWSのservice別formatに従って生成する。
+
+基本形:
+
+```text
+arn:aws:<service>:<virtual-region>:<virtual-account-id>:<resource>
+```
+
+S3、IAM、Route 53等、AWSでRegion/Account部分の扱いが異なるサービスはservice-specific ARN formatterで生成する。
+
+ARN生成を各UIやProviderへ分散実装せず、共通 `ArnFactory` / resource naming libraryを使用する。
+
+Providerが異なっても同一Workspace内では同じvirtualAccountId / region namespaceを利用する。
+
+## 4.7 Lab Gateway / Provider Routing
+
+各Active Runtimeに `Lab Gateway` を1つ配置し、Console BFFおよびLab内AWS SDKからのAWS互換requestの単一入口とする。
+
+```text
+Console BFF ──────────────┐
+                          ▼
+                     Lab Gateway
+                          │
+Lab内 Lambda/ECS SDK ─────┘
+                          │
+              ┌───────────┼───────────┐
+              ▼           ▼           ▼
+         MiniStack     Internal      Deny
+         Provider      Provider
+```
+
+BrowserからLab Gatewayへ直接到達させない。
+
+### 4.7.1 Route Key
+
+Provider Routingは最低限以下を入力として決定する。
+
+- workspaceId
+- virtualAccountId
+- virtualRegion
+- serviceCode
+- operation
+- runtimeType
+- ServiceCapability / OperationCapability
+- security policy
+
+routing granularityはservice単位だけでなくoperation単位を許容する。
+
+例:
+
+```text
+ec2:DescribeInstances      -> MiniStack
+ec2:RunInstances(metadata) -> MiniStack
+ec2:RunInstances(execute)  -> Advanced/Internal
+service:UnsupportedOp      -> Deny
+```
+
+### 4.7.2 Routing Order
+
+```text
+Request
+ ↓
+Workspace / Session binding validation
+ ↓
+Virtual Account / Region validation
+ ↓
+Operation allowlist / Guardrail
+ ↓
+Runtime requirement validation
+ ↓
+ProviderRoute lookup
+ ↓
+MiniStack / Internal Emulator
+ ↓
+Response normalization
+ ↓
+Audit
+```
+
+禁止operationはProviderへ送る前にLab Gatewayで拒否する。
+
+### 4.7.3 ProviderRoute
+
+Service CapabilityにはOperation単位で以下を持てる構造とする。
+
+```yaml
+serviceCode: rds
+operation: CreateDBInstance
+provider: ministack
+runtimeRequirement: advanced
+capacityProfile: medium
+enabled: true
+dangerous: false
+snapshotSupport: partial
+```
+
+Provider値:
+
+- `ministack`
+- `internal`
+- `reference`
+- `deny`
+
+同じAWSサービスでもOperationによりProviderを変更可能とする。
+
+### 4.7.4 Lab Credential
+
+Lab内コードへ実AWS Credentialを渡さない。
+
+Lab SDK用CredentialはLab専用品とする。
+
+- Access Key IDはWorkspaceの12桁virtualAccountIdを利用する。
+- SecretはLabSessionごとに生成するLab専用random secretとする。
+- Lab Gatewayは期待するLab Credential以外を拒否する。
+- `AKIA...` / `ASIA...` 等の実AWS credentialをLab API Credentialとして利用しない。
+- SDK endpointをLab Gatewayへ明示設定する。
+- RuntimeのInternet/AWS public endpoint egress denyを併用する。
+
+これにより、利用者コードがendpoint設定を誤っても実AWSへ到達できないことを多層で担保する。
+
+### 4.7.5 Cross-Service Integration
+
+MiniStack内で完結するservice連携はMiniStack native integrationを優先する。
+
+MiniStack / Internal Providerを跨ぐ連携は `Integration Bridge` を利用する。
+
+Integration Bridgeはcanonical ARNをキーとしてtargetを解決し、Provider間で以下を中継する。
+
+- event delivery
+- resource reference resolution
+- invoke / publish / enqueue等の内部action
+
+同一integrationをMiniStack native pathとBridgeの両方で二重実行しないよう、Service Capabilityにintegration ownerを定義する。
+
+## 4.8 認証・認可設計
+
+### 4.8.1 User Authentication
+
+Corporate IdPのOIDCを使用する。
+
+初期構成はALBのOIDC authenticationを第一候補とし、BFFはALBで認証済みのidentityのみ受け付ける。
+
+- Authorization Code flowを使用する。
+- BrowserへIdP refresh tokenを直接保持させない。
+- Session CookieはSecure / HttpOnly / SameSiteを必須とする。
+- 認証HeaderをInternet側から直接BFFへ到達させない。
+- BFFはALB OIDC token/headerの署名・issuer・audience・expiryを検証する。
+- Logout時はApplication sessionとIdP sessionの双方を考慮する。
+
+Corporate IdP要件によりALB OIDCを利用できない場合のみBFF OIDC implementationへ切り替える。
+
+### 4.8.2 Authorization Model
+
+Application RBACは以下の4 Roleを基本とする。
+
+| Role | 権限概要 |
+| --- | --- |
+| Learner | 自分のWorkspace/Lab/Snapshotの利用 |
+| Operator | Runtime状態確認、強制停止、運用操作。Payload閲覧不可 |
+| Administrator | Quota、Service Capability、System設定変更。Payload閲覧不可 |
+| SecurityAuditor | Audit/Incident確認。通常のLab変更権限なし |
+
+権限はdeny-by-defaultとする。
+
+IdP group claimからRoleへmapping可能とするが、最終的なApplication RoleAssignmentをPlatform側で管理する。
+
+### 4.8.3 Ownership Authorization
+
+Learner向けrequestはすべて次の順序で検証する。
+
+```text
+Authenticated User
+ ↓
+Workspace owner check
+ ↓
+Session belongs to Workspace
+ ↓
+Snapshot belongs to Workspace
+ ↓
+Requested operation permission
+ ↓
+Service / Quota / Guardrail check
+```
+
+URL上のworkspaceId / snapshotId等だけを信用しない。
+
+### 4.8.4 Operator / Administrator
+
+Operator / Administratorであっても利用者Payloadへの通常アクセス権は付与しない。
+
+以下は管理可能とする。
+
+- metadata
+- status
+- resource count
+- runtime metrics
+- operation result
+- audit metadata
+
+Snapshot本体やLab内Object body等の閲覧はBreak Glassのみとする。
+
+### 4.8.5 Break Glass
+
+Break Glassは通常RBACと別権限として管理する。
+
+最低限以下を必須とする。
+
+- incidentId
+- targetWorkspace / Snapshot
+- reason
+- requester
+- approver
+- expiresAt
+- full audit
+
+可能な環境では二者承認を採用する。
+
+### 4.8.6 Service-to-Service Authentication
+
+Platform component間はAWS IAM Role等のworkload identityを利用する。
+
+Runtime Gateway / Worker Agent等のApplication-level requestには短命なruntime-bound credential/tokenを利用し、最低限以下をbindingする。
+
+- workspaceId
+- sessionId
+- runtimeId
+- allowed action
+- expiry
+
+利用者CredentialをPlatform内部service authenticationへ流用しない。
+
 ## 5. MiniStack 管理設計
 
 ## 5.1 採用方式
@@ -874,10 +1181,54 @@ Aurora PostgreSQLに以下を保持する。
 - createdAt
 - lastLoginAt
 
-### LabSession
+### RoleAssignment
 
 - id
 - userId
+- role
+- source
+- createdAt
+- expiresAt
+
+### LabWorkspace
+
+- id
+- ownerUserId
+- virtualAccountId
+- partition
+- defaultRegion
+- enabledRegionsJson
+- status
+- activeSessionId
+- currentSnapshotId
+- standardEligible
+- createdAt
+- updatedAt
+- deletedAt
+
+`virtualAccountId` はuniqueとし、削除WorkspaceのIDも意図的に再利用しない。
+
+### LabOperation
+
+- id
+- workspaceId
+- sessionId
+- idempotencyKey
+- operationType
+- status
+- requestedBy
+- correlationId
+- requestHash
+- resultJson
+- errorCode
+- createdAt
+- startedAt
+- completedAt
+
+### LabSession
+
+- id
+- workspaceId
 - status
 - runtimeType
 - runtimeId
@@ -1259,68 +1610,179 @@ Lab共通Header等には、AWS公式サービスとの誤認を避けるため�
 
 ## 14. API基本設計
 
-APIは概念上以下の区分に分ける。
+### 14.1 基本方針
 
-### Lab API
+Platform APIはREST / JSONとし、初期versionは `/api/v1` とする。
 
-```text
-POST   /api/labs
-GET    /api/labs/{labId}
-POST   /api/labs/{labId}/reset
-POST   /api/labs/{labId}/suspend
-POST   /api/labs/{labId}/resume
-DELETE /api/labs/{labId}
-```
+利用者が操作する永続単位はLabSessionではなくLabWorkspaceとする。Session/Runtime IDは原則として内部管理用とし、利用者APIではWorkspaceを中心に扱う。
 
-### Snapshot API
+共通仕様:
 
-```text
-GET    /api/lab-snapshots
-GET    /api/lab-snapshots/{snapshotId}
-POST   /api/lab-snapshots/{snapshotId}/resume
-DELETE /api/lab-snapshots/{snapshotId}
-```
+- timestamp: RFC3339 / UTC
+- JSON property: camelCase
+- ID: opaque UUID等。連番IDを外部公開しない
+- Pagination: cursor方式
+- Request correlation: `X-Correlation-Id`
+- Mutation idempotency: `Idempotency-Key`
+- Optimistic concurrency: version / ETag
+- Content-Type: `application/json`
+- API version: URL path version
 
-利用者へ Snapshot object の直接download APIは提供しない。
-
-### Service API
+### 14.2 Workspace API
 
 ```text
-GET    /api/labs/{labId}/services
-GET    /api/labs/{labId}/services/{serviceCode}/capabilities
+POST   /api/v1/workspaces
+GET    /api/v1/workspaces
+GET    /api/v1/workspaces/{workspaceId}
+POST   /api/v1/workspaces/{workspaceId}/start
+POST   /api/v1/workspaces/{workspaceId}/reset
+POST   /api/v1/workspaces/{workspaceId}/suspend
+POST   /api/v1/workspaces/{workspaceId}/resume
+POST   /api/v1/workspaces/{workspaceId}/optimize-runtime
+DELETE /api/v1/workspaces/{workspaceId}
 ```
 
-サービス固有API例:
+### 14.3 Snapshot API
 
 ```text
-GET    /api/labs/{labId}/s3/buckets
-POST   /api/labs/{labId}/s3/buckets
-GET    /api/labs/{labId}/s3/buckets/{bucket}
-DELETE /api/labs/{labId}/s3/buckets/{bucket}
+GET    /api/v1/workspaces/{workspaceId}/snapshots
+GET    /api/v1/workspaces/{workspaceId}/snapshots/{snapshotId}
+POST   /api/v1/workspaces/{workspaceId}/snapshots/{snapshotId}/resume
+DELETE /api/v1/workspaces/{workspaceId}/snapshots/{snapshotId}
 ```
 
-各Service APIはAdapterへ委譲する。
+利用者へSnapshot objectの直接download APIは提供しない。
 
-### Operator API
+### 14.4 Service API
+
+Service APIはAWSサービスごとに型安全なAPIを持つ。
+
+概念形:
 
 ```text
-GET    /api/admin/labs
-GET    /api/admin/labs/{labId}
-POST   /api/admin/labs/{labId}/terminate
-GET    /api/admin/snapshots
-DELETE /api/admin/snapshots/{snapshotId}
+/api/v1/workspaces/{workspaceId}/services/{serviceCode}/...
 ```
 
-### Configuration API
+BFFからLab GatewayへはProvider非依存のtyped commandとして渡し、Browserから任意AWS APIを無制限proxyしない。
+
+### 14.5 Operation API
+
+Provision / Suspend / Resume / Runtime Promotion等、数秒以上かかり得る処理は非同期Operationとする。
+
+Mutation request:
+
+```http
+POST /api/v1/workspaces/{workspaceId}/suspend
+Idempotency-Key: <opaque-value>
+```
+
+response:
+
+```json
+{
+  "operationId": "op_xxx",
+  "status": "queued"
+}
+```
+
+status:
 
 ```text
-GET    /api/admin/services
-PUT    /api/admin/services/{serviceCode}
-GET    /api/admin/quotas
-PUT    /api/admin/quotas/{id}
-GET    /api/admin/snapshot-policy
-PUT    /api/admin/snapshot-policy
+queued
+waitingForRuntime
+running
+succeeded
+failed
+cancelled
 ```
+
+取得:
+
+```text
+GET /api/v1/operations/{operationId}
+```
+
+UIはpollingを初期方式とし、将来SSE/WebSocketへ拡張可能とする。
+
+### 14.6 Idempotency
+
+以下の操作では `Idempotency-Key` を必須とする。
+
+- Workspace create/start
+- reset
+- suspend
+- resume
+- runtime promotion
+- snapshot restore
+- Advanced capacity allocationを伴うoperation
+
+同一user / endpoint / idempotency key / request hashで再送された場合、同じOperation結果を返す。
+
+異なるrequest bodyで同一keyを利用した場合はConflictとする。
+
+### 14.7 Concurrency Control
+
+Workspace lifecycle mutationはWorkspace単位の排他制御を行う。
+
+同時に複数の以下を実行しない。
+
+- suspend
+- resume
+- reset
+- stop/delete
+- Standard/Advanced切替
+
+Resource updateには可能な範囲でETag / resource versionを使用し、lost updateを防止する。
+
+### 14.8 Pagination
+
+一覧APIはcursor paginationを使用する。
+
+初期default:
+
+- default limit: 50
+- max limit: 100
+
+offset paginationは大量データ一覧の標準方式にはしない。
+
+### 14.9 Correlation / Audit
+
+`X-Correlation-Id` が未指定の場合はBFFで生成し、以下へ引き継ぐ。
+
+```text
+Browser request
+ → BFF
+ → LabOperation
+ → Service Adapter
+ → Lab Gateway
+ → Provider
+ → Audit / Log
+```
+
+Secret / Payload bodyはCorrelation目的で記録しない。
+
+### 14.10 Operator API
+
+```text
+GET  /api/v1/admin/workspaces
+GET  /api/v1/admin/runtimes
+GET  /api/v1/admin/workers
+POST /api/v1/admin/workspaces/{workspaceId}/terminate
+POST /api/v1/admin/workers/{workerId}/drain
+POST /api/v1/admin/system/maintenance
+```
+
+管理APIはrole checkと管理Auditを必須とする。
+
+### 14.11 Configuration API
+
+```text
+GET/PUT /api/v1/admin/config/service-capabilities
+GET/PUT /api/v1/admin/config/quotas
+GET/PUT /api/v1/admin/config/runtime-policy
+```
+
+Production設定変更には変更前後のdiffをAuditへ記録する。
 
 ## 15. エラー設計
 
