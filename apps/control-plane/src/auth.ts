@@ -33,9 +33,11 @@ export function resolvePrototypeIdentity(
     return null;
   }
 
+  const displayName = firstHeader(headers["x-prototype-display-name"]);
+
   return {
     subject,
-    displayName: firstHeader(headers["x-prototype-display-name"]),
     roles,
+    ...(displayName ? { displayName } : {}),
   };
 }
