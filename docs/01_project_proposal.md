@@ -234,6 +234,16 @@ AWSサービスへのrequestはLab Gatewayを単一入口とし、Operation単�
 
 Lab内コードには実AWS Credentialを渡さず、Lab専用CredentialとLab Gateway endpointを使用する。Runtimeから実AWS public endpointへの任意egressは禁止し、誤操作による実AWS到達を防止する。
 
+### 10.4 東京・大阪Multi-Region学習
+
+初期Virtual RegionはAWS実環境と同じRegion codeを用い、東京 `ap-northeast-1` と大阪 `ap-northeast-3` の2つとする。
+
+同一LabWorkspace内に両Regionのresourceを作成でき、東京をPrimary、大阪をRecovery RegionとしたBackup/Restore、Pilot Light、Warm Standby、Active/Passive、Active/Active、Route 53 failover、cross-region replication、RPO/RTO等のDR学習を可能にする。
+
+Regional outageは利用者Workspace内のFault Injectionとして再現し、Platform自身や他利用者へ影響させない。
+
+このVirtual DR機能とAWS Internal Lab自身の物理DRは分離して扱う。
+
 ## 11. セキュリティ基本方針
 
 ### 11.1 データ取扱い
