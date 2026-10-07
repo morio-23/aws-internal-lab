@@ -214,11 +214,15 @@ Docker-in-Dockerを必要としないサービスはECS/Fargate上の使い捨�
 
 ### 10.2 Advanced Lab
 
-RDS、ElastiCache、ECS、EKS、非Python Lambda等、MiniStack内部からコンテナ実行環境を必要とする機能についてはFargateとは分離する。
+RDS、ElastiCache、ECS、EKS、Docker Lambda、CodeBuild等、コンテナ実行環境を必要とする機能についてはFargateとは分離する。
 
-初期方針は、Advanced Labを専用EC2インスタンス単位の使い捨て環境として起動し、Lab終了時にEC2自体をTerminateする。
+Advanced Labは、Nested Virtualization対応EC2で構成する共有Worker Pool上に配置する。EC2をLabごとに1台払い出す方式は採用せず、1台のWorker Hostに複数Labを収容する。
 
-これによりDocker Engineへの強い権限を共有基盤から分離し、事故時の影響範囲を1 Labへ限定する。
+ただし、異なるLabのDocker workloadを同一Host kernel上へ直接混在させない。**1 Advanced Lab = 1 microVM** を基本とし、Firecracker/KVM等の仮想化境界でguest kernel、Docker daemon、filesystem、network、CPU/Memoryを分離する。
+
+Standard LabでAdvanced必須操作が要求された場合は、Lab状態をSnapshotした上でFargateを停止し、Advanced Worker上のmicroVMへ自動移行する。Advanced必須resource/workloadがなくなった後は、次回Suspend/Resume等の安全な境界でFargateへ自動復帰可能とする。
+
+Worker PoolはAdvanced Capacity Unit (ACU)で容量管理し、需要に応じてWorkerのサイズ・台数を自動調整する。少数利用時はWorkerを0台まで縮退し、利用量増加時のみscale outする。
 
 ## 11. セキュリティ基本方針
 
@@ -244,7 +248,7 @@ Lab内データは原則一時データとし、利用者が作成したS3 Objec
 - 利用者ごとにLabを分離する。
 - MiniStackの論理アカウント分離のみをセキュリティ境界として使用しない。
 - Standard LabはFargate Task / ENI / Security Group等で境界を設ける。
-- Advanced Labは使い捨てEC2単位で境界を設ける。
+- Advanced Labは共有EC2 Worker Pool上でLab単位microVMを境界とし、異なるLabのDocker workloadをHost kernel上へ直接混在させない。
 - 他利用者Labへの横断アクセスを禁止する。
 
 ### 11.3 ネットワーク
@@ -358,6 +362,10 @@ Advanced LabのEC2管理権限も最小化し、Lab内コンテナからEC2 Inst
 
 ### Phase 3: Advanced Lab
 
+- Shared Advanced Worker Pool
+- Nested Virtualization / Firecracker/KVM
+- ACUベースの自動配置・自動スケール
+- Standard / Advanced自動切替
 - Lambda実行拡大
 - RDS
 - ElastiCache
