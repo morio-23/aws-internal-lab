@@ -38,6 +38,15 @@ export class RuntimeStack extends Stack {
         allowedPattern: "^sg-[0-9a-fA-F]+$",
       },
     );
+    const s3ManagedPrefixListId = new CfnParameter(
+      this,
+      "S3ManagedPrefixListId",
+      {
+        type: "String",
+        description: "AWS-managed S3 prefix list ID for the deployment Region",
+        allowedPattern: "^pl-[0-9a-fA-F]+$",
+      },
+    );
     const runtimeVpcPeeringConnectionId = new CfnParameter(
       this,
       "RuntimeVpcPeeringConnectionId",
@@ -72,7 +81,7 @@ export class RuntimeStack extends Stack {
     const taskSecurityGroup = new ec2.SecurityGroup(this, "StandardTaskSecurityGroup", {
       vpc,
       description: "Standard Lab Fargate task security group",
-      allowAllOutbound: true,
+      allowAllOutbound: false,
     });
     new ec2.CfnSecurityGroupIngress(this, "PlatformBffToLabGateway", {
       groupId: taskSecurityGroup.securityGroupId,
@@ -94,6 +103,19 @@ export class RuntimeStack extends Stack {
       ec2.Port.tcp(443),
       "Allow Standard Runtime access to AWS private endpoints",
     );
+    taskSecurityGroup.addEgressRule(
+      endpointSecurityGroup,
+      ec2.Port.tcp(443),
+      "Allow only ECR and CloudWatch Logs interface endpoints",
+    );
+    new ec2.CfnSecurityGroupEgress(this, "StandardTaskToS3Egress", {
+      groupId: taskSecurityGroup.securityGroupId,
+      ipProtocol: "tcp",
+      fromPort: 443,
+      toPort: 443,
+      destinationPrefixListId: s3ManagedPrefixListId.valueAsString,
+      description: "Allow ECR image layer downloads through the S3 gateway endpoint",
+    });
 
     vpc.addGatewayEndpoint("S3Endpoint", {
       service: ec2.GatewayVpcEndpointAwsService.S3,
