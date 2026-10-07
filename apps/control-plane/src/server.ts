@@ -5,11 +5,15 @@ import { pathToFileURL } from "node:url";
 import { hasPermission } from "../../../packages/domain/src/auth.js";
 import { uuidv7 } from "../../../packages/domain/src/id.js";
 import { createLifecycleOperation } from "../../../packages/db/src/lifecycle-repository.js";
+import { getActiveRuntimeForWorkspace } from "../../../packages/db/src/runtime-repository.js";
 import {
   createWorkspace,
   getWorkspaceForOwner,
   listWorkspacesForOwner,
 } from "../../../packages/db/src/workspace-repository.js";
+import { assertVirtualRegion } from "../../../packages/aws-virtual/src/index.js";
+import { signRuntimeToken } from "../../../packages/runtime-auth/src/index.js";
+import { prototypeCapabilityRegistry } from "../../../packages/service-capabilities/src/index.js";
 import { resolvePrototypeIdentity } from "./auth.js";
 
 const port = Number(process.env.PORT ?? "3001");
@@ -132,6 +136,106 @@ export const server = createServer(async (request, response) => {
       }
 
       json(response, 200, { workspace });
+      return;
+    }
+
+    const serviceMatch = request.url?.match(
+      /^\/api\/v1\/workspaces\/([0-9a-f-]+)\/services\/([a-z0-9-]+)\/([A-Za-z0-9]+)$/,
+    );
+    if (serviceMatch && request.method === "POST") {
+      if (!hasPermission(identity, "workspace:mutate-own")) {
+        json(response, 403, { error: { code: "FORBIDDEN" } });
+        return;
+      }
+
+      const workspaceId = serviceMatch[1];
+      const serviceCode = serviceMatch[2];
+      const operation = serviceMatch[3];
+      if (!workspaceId || !serviceCode || !operation) {
+        json(response, 400, { error: { code: "INVALID_SERVICE_REQUEST" } });
+        return;
+      }
+
+      const workspace = await getWorkspaceForOwner({
+        databaseUrl,
+        workspaceId,
+        ownerSubject: identity.subject,
+      });
+      if (!workspace) {
+        json(response, 404, { error: { code: "WORKSPACE_NOT_FOUND" } });
+        return;
+      }
+
+      const runtime = await getActiveRuntimeForWorkspace({
+        databaseUrl,
+        workspaceId,
+      });
+      if (!runtime || runtime.runtimeStatus !== "ready" || !runtime.privateEndpoint) {
+        json(response, 409, { error: { code: "WORKSPACE_NOT_ACTIVE" } });
+        return;
+      }
+
+      const capability = prototypeCapabilityRegistry.resolve(
+        serviceCode,
+        operation,
+      );
+      if (!capability || !capability.enabled || capability.provider === "deny") {
+        json(response, 404, { error: { code: "OPERATION_UNSUPPORTED" } });
+        return;
+      }
+      if (capability.runtimeRequirement !== runtime.runtimeType) {
+        json(response, 409, { error: { code: "RUNTIME_PROMOTION_REQUIRED" } });
+        return;
+      }
+
+      const body = (await readJsonBody(request)) as {
+        virtualRegion?: string;
+        payload?: unknown;
+      };
+      const virtualRegion = body.virtualRegion ?? workspace.primaryVirtualRegion;
+      assertVirtualRegion(virtualRegion);
+      if (!workspace.enabledRegions.includes(virtualRegion)) {
+        json(response, 400, { error: { code: "INVALID_VIRTUAL_REGION" } });
+        return;
+      }
+
+      const privateKeyB64 = process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64;
+      if (!privateKeyB64) {
+        json(response, 503, { error: { code: "RUNTIME_AUTH_UNAVAILABLE" } });
+        return;
+      }
+      const privateKeyPem = Buffer.from(privateKeyB64, "base64").toString("utf8");
+      const correlationId =
+        firstHeader(request.headers["x-correlation-id"]) ?? uuidv7();
+      const token = signRuntimeToken({
+        privateKeyPem,
+        workspaceId,
+        sessionId: runtime.sessionId,
+        virtualAccountId: runtime.virtualAccountId,
+        ttlSeconds: 30,
+      });
+
+      const gatewayResponse = await fetch(
+        "http://" + runtime.privateEndpoint + "/invoke",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer " + token,
+          },
+          body: JSON.stringify({
+            virtualRegion,
+            serviceCode,
+            operation,
+            ...(body.payload === undefined ? {} : { payload: body.payload }),
+            correlationId,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+
+      const gatewayBody = (await gatewayResponse.json()) as unknown;
+      json(response, gatewayResponse.status, gatewayBody);
       return;
     }
 
