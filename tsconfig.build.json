@@ -8,7 +8,8 @@
   },
   "include": [
     "apps/**/*.ts",
-    "packages/**/*.ts"
+    "packages/**/*.ts",
+    "infra/**/*.ts"
   ],
   "exclude": [
     "tests/**",
