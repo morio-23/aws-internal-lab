@@ -29,6 +29,7 @@
 | 用語 | 定義 |
 | --- | --- |
 | Lab | 利用者ごとに払い出される独立した AWS エミュレーション環境 |
+| LabWorkspace | Suspend/ResumeやRuntime切替を跨いで継続する論理AWS環境。Virtual Account/Region/ARN namespaceの正本 |
 | Standard Lab | ECS/Fargate 等、Docker daemon を必要としない標準実行環境 |
 | Advanced Lab | RDS/ECS/EKS 等、追加コンテナ実行が必要なサービス向け専用実行環境 |
 | Control Plane | AWS リソースの作成、設定、参照、更新、削除等の管理 API |
@@ -69,6 +70,13 @@ Operator 権限に加え、以下を行える。
 - システム設定変更
 - Audit 参照
 - 緊急停止
+
+### 4.4 SecurityAuditor
+
+- Audit / Incident情報を参照できる。
+- 通常のLab/Workspace変更権限を持たない。
+- 利用者Payloadを通常権限では閲覧できない。
+- Break Glassが必要な調査はIncident ID、理由、期限、承認を伴う別権限とする。
 
 ## 5. 業務要件
 
@@ -127,6 +135,26 @@ Learner / Operator / Administrator の権限を分離できること。
 ### FR-AUTH-005 Snapshot 所有者チェック
 
 Snapshot の作成、参照、Resume、削除において、認証ユーザーと Snapshot owner の一致を検証すること。
+
+### FR-AUTH-006 OIDC Session Protection
+
+社内OIDC認証を利用し、Browserに長期CredentialやIdP refresh tokenを直接保持させないこと。Web sessionはSecure / HttpOnly等のWeb security属性を利用できること。
+
+### FR-AUTH-007 Deny by default
+
+Application authorizationはdeny-by-defaultとし、RoleおよびResource ownershipの両方で認可すること。
+
+### FR-AUTH-008 SecurityAuditor
+
+Audit/Incident参照専用RoleをOperator/Administratorから分離できること。
+
+### FR-AUTH-009 Service identity
+
+Platform component間の認証に利用者Credentialを流用せず、IAM Role等のworkload identityまたは短命なruntime-bound credentialを利用すること。
+
+### FR-AUTH-010 Break Glass
+
+利用者PayloadまたはSnapshot内容への例外的アクセスが必要な場合、Incident ID、対象、理由、実施者、承認者、有効期限を記録するBreak Glass方式を利用できること。
 
 ## 6.2 Lab ライフサイクル
 
@@ -448,6 +476,106 @@ MiniStack および依存パッケージの SBOM / License Scan を実施でき�
 
 採用する Lab Engine について、Suspend / Resume に必要な状態の保存・復元方式を実装または検証できること。MiniStack の永続化機能を利用する場合は、`PERSIST_STATE` / `STATE_DIR`、S3 object bytes の `S3_PERSIST` / `S3_DATA_DIR` 等を利用し、Runtime のローカル保存領域から Snapshot Store へ退避・復元すること。
 
+## 6.10 仮想AWS環境
+
+### FR-VAWS-001 LabWorkspace
+
+利用者が継続利用する論理AWS環境をLabWorkspaceとして管理し、LabSession/Runtimeの作成・破棄とは分離すること。
+
+### FR-VAWS-002 Virtual Account ID
+
+各WorkspaceにPlatform内で一意な12桁Virtual AWS Account IDを割り当てること。
+
+Virtual Account IDは利用者識別情報を埋め込まず、Workspace存続中に変更せず、削除後も意図的に再利用しないこと。
+
+### FR-VAWS-003 Region
+
+WorkspaceはVirtual Regionを保持し、物理RuntimeのAWS Regionとは分離して扱うこと。複数Virtual Regionへ拡張可能な構造を持つこと。
+
+### FR-VAWS-004 Global / Regional service
+
+AWSサービスごとにglobal / regional scopeを管理できること。Regional stateはVirtual Account IDとVirtual Regionで分離すること。
+
+### FR-VAWS-005 ARN namespace
+
+ProviderやRuntimeが変わっても、同一WorkspaceではVirtual Account ID、Region、ARN namespaceを維持すること。
+
+### FR-VAWS-006 ARN format
+
+サービス固有差異を考慮した共通ARN生成機構を持ち、UI/Providerごとに独自ARN生成を実装しないこと。
+
+### FR-VAWS-007 Lab Credential
+
+Lab内AWS SDKへ実AWS Credentialを渡さず、Virtual Accountに紐づくLab専用Credentialを利用できること。
+
+### FR-VAWS-008 実AWS誤到達防止
+
+Lab SDK endpointをLab Gatewayへ向け、実AWS public endpointへのegress制御と組み合わせて、Lab Credentialから実AWSへ誤到達しない構造とすること。
+
+## 6.11 Provider Routing / Integration
+
+### FR-ROUTE-001 Single Gateway
+
+Console BFFおよびLab内AWS SDKからのAWS互換requestは、Active Runtime内の単一Lab Gatewayを経由すること。
+
+### FR-ROUTE-002 Operation routing
+
+Provider RoutingはAWSサービス単位だけでなくOperation単位で設定できること。
+
+### FR-ROUTE-003 Provider types
+
+少なくともMiniStack / Internal Emulator / Reference / DenyをProvider routeとして扱えること。
+
+### FR-ROUTE-004 Guardrail before provider
+
+禁止Operation、Quota、Runtime requirement等をProvider呼び出し前に検査し、許可されないrequestをProviderへ送らないこと。
+
+### FR-ROUTE-005 Runtime requirement
+
+Advanced必須OperationがStandard Runtimeで要求された場合、Runtime Promotionへ連携できること。
+
+### FR-ROUTE-006 Cross-provider integration
+
+MiniStackとInternal Providerを跨ぐservice integrationについて、canonical ARN等を用いてtargetを解決・中継できる構造を持つこと。
+
+### FR-ROUTE-007 Double delivery prevention
+
+同一service integrationについてMiniStack native integrationとInternal Integration Bridgeが二重実行しないよう、integration ownerを管理できること。
+
+## 6.12 API共通要件
+
+### FR-API-001 Versioning
+
+Platform APIはversionを明示できること。初期versionはv1とする。
+
+### FR-API-002 Workspace centric
+
+利用者向けAPIはLabSession/RuntimeではなくLabWorkspaceを主要resourceとして扱うこと。
+
+### FR-API-003 Async operation
+
+Provision、Suspend、Resume、Runtime Promotion等の長時間処理は非同期Operationとして扱い、Operation状態を取得できること。
+
+### FR-API-004 Idempotency
+
+Workspace作成、Start、Reset、Suspend、Resume、Snapshot restore等のmutationについてIdempotency Keyで重複実行を防止できること。
+
+### FR-API-005 Concurrency
+
+Workspace lifecycle mutationは同時実行させず、排他またはoptimistic concurrencyにより競合を防止すること。
+
+### FR-API-006 Correlation ID
+
+Browser requestからBFF、Lab Operation、Lab Gateway、Provider、Auditまで共通Correlation IDを引き継げること。
+
+### FR-API-007 Pagination
+
+一覧APIはcursor paginationを利用できること。
+
+### FR-API-008 Error envelope
+
+Platform固有ErrorとAWS Provider互換Errorを識別可能な共通error formatを持つこと。
+
 ## 7. 非機能要件
 
 ## 7.1 セキュリティ
@@ -651,6 +779,13 @@ Snapshot payload 本体は Aurora に保存しない。
 22. AWS公式サービスとの誤認防止表示が実装される。
 23. `04_ip_guidelines.md` の知財チェック項目について法務・知財レビューに提示可能な状態であること。
 
+
+24. WorkspaceのVirtual Account ID / Region / ARN namespaceがSuspend/ResumeおよびStandard/Advanced切替後も維持される。
+25. Lab内SDKへ実AWS Credentialを渡さず、実AWS public endpointへ誤送信できないことを確認できる。
+26. Operation単位のProvider RoutingでMiniStack / Internal / Denyを切り替えられる。
+27. 同じIdempotency KeyによるLifecycle API再送で二重Runtime/Snapshotを作成しない。
+28. Learner / Operator / Administrator / SecurityAuditorの権限分離とowner checkが確認できる。
+29. Correlation IDにより利用者操作からProvider/Auditまで追跡でき、Payload本文は記録されない。
 ## 12. 後続要件候補
 
 初期 Lab 基盤確立後、別要件として以下を検討する。
