@@ -2956,12 +2956,11 @@ aws-internal-lab/
 
 - 社内IdP製品固有のOIDC endpoint / claim mapping / ALB OIDC互換性
 - Aurora Serverless v2 / provisioned等の選択
-- ECS/Fargateの具体的CPU/Memory値
 - Snapshot archive形式・圧縮方式
 - Snapshot Bucket Versioningの有無
 - Snapshot transferをControl Plane側/sidecar側のどちらで行うか
 - Advanced Workerのinstance family/size、1 HostあたりmicroVM密度、Resource Profile初期値
-- Advanced Lab Snapshot方式
+- Advanced serviceごとのSnapshot整合性level / export手順
 - Audit保存期間
 - DLP補助機能の初期導入有無
 - 外部通信を許可するサービスの扱い
@@ -2970,7 +2969,7 @@ aws-internal-lab/
 - UI実装Framework
 - IaC実装ツールの最終選定
 
-これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。ただしAWS Management Consoleの実操作を学べること、Standard LabのSuspend/Resume、LabWorkspace/Virtual Account/Region/ARNの継続性、Operation単位Provider Routing、RBAC、API Idempotencyを提供すること自体は未決事項ではなく、本システムの前提要件とする。
+これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。ただしAWS Management Consoleの実操作を学べること、Standard LabのSuspend/Resume、LabWorkspace/Virtual Account/東京・大阪Virtual Region/ARNの継続性、DR Fault Injection、Operation単位Provider Routing、RBAC、API Idempotency、Multi-AZ Control Plane、ACU/Cost Guardrail、Observability、CI/CD Gateを提供すること自体は未決事項ではなく、本システムの前提要件とする。
 
 ## 30. 参考
 
@@ -2986,6 +2985,9 @@ aws-internal-lab/
 - AWS Internal Lab 知財・ブランド利用ガイドライン: `04_ip_guidelines.md`
 - Advanced Worker ADR: `adr/0001-shared-advanced-worker-pool.md`
 - Virtual AWS Workspace / Provider Routing ADR: `adr/0002-virtual-aws-workspace-and-provider-routing.md`
+- Tokyo / Osaka Virtual Region DR ADR: `adr/0003-tokyo-osaka-virtual-regions-dr-learning.md`
+- AWS Regions: https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html
+- AWS Well-Architected DR strategies: https://docs.aws.amazon.com/wellarchitected/latest/framework/rel_planning_for_recovery_disaster_recovery.html
 
 ## 31. 知財・ブランド設計
 
