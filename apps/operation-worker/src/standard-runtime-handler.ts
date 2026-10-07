@@ -305,8 +305,6 @@ export async function executeStandardRuntimeOperation(input: {
       workspaceId: operation.workspaceId,
       sourceSessionId: runtime.sessionId,
     });
-    let taskStopped = false;
-    let gatewayQuiesced = false;
     const gatewayIdentity = {
       endpoint: runtime.privateEndpoint,
       workspaceId: operation.workspaceId,
@@ -314,25 +312,28 @@ export async function executeStandardRuntimeOperation(input: {
       virtualAccountId: runtime.virtualAccountId,
     };
 
+    let gatewayQuiesced = false;
+    let createdSnapshotId: string | undefined;
+    let manifestKey: string | undefined;
+    let stopRequested = false;
+    let taskStopped = false;
+
     try {
+      // Non-destructive Suspend protocol:
+      // 1. stop new learner mutations and drain in-flight work,
+      // 2. persist MiniStack state while the source Task is still alive,
+      // 3. take the EBS snapshot,
+      // 4. only after the durable copy exists, stop the source Task.
       await input.gatewayAdmin.quiesce(gatewayIdentity);
       gatewayQuiesced = true;
-
-      await input.provisioner.stop(
-        runtime.providerRef,
-        "Workspace Standard Runtime suspend",
-      );
-      await waitForRuntimeStopped({
-        provisioner: input.provisioner,
-        taskArn: runtime.providerRef,
-      });
-      taskStopped = true;
+      await input.gatewayAdmin.persist(gatewayIdentity);
 
       const created = await input.snapshotManager.createSnapshot({
         volumeId: runtime.stateVolumeRef,
         workspaceId: operation.workspaceId,
         snapshotId: snapshot.id,
       });
+      createdSnapshotId = created.snapshotId;
 
       const manifest = await input.manifestStore.putManifest({
         snapshotFormatVersion: 1,
@@ -346,6 +347,18 @@ export async function executeStandardRuntimeOperation(input: {
         virtualRegions: runtime.enabledRegions,
         createdAt: (input.now?.() ?? new Date()).toISOString(),
       });
+      manifestKey = manifest.key;
+
+      stopRequested = true;
+      await input.provisioner.stop(
+        runtime.providerRef,
+        "Workspace Standard Runtime suspend",
+      );
+      await waitForRuntimeStopped({
+        provisioner: input.provisioner,
+        taskArn: runtime.providerRef,
+      });
+      taskStopped = true;
 
       await finishStandardRuntime({
         databaseUrl: input.databaseUrl,
@@ -374,19 +387,40 @@ export async function executeStandardRuntimeOperation(input: {
       });
       return;
     } catch (error) {
+      // Before StopTask is requested the source Runtime is still intact.
+      // Roll it back to ready and discard any partial durable copy.
+      if (!stopRequested && gatewayQuiesced) {
+        let unquiesced = false;
+        try {
+          await input.gatewayAdmin.unquiesce(gatewayIdentity);
+          unquiesced = true;
+        } catch {
+          // Fail closed: leave the Runtime quiesced for operator recovery.
+        }
+
+        if (unquiesced) {
+          if (manifestKey) {
+            try {
+              await input.manifestStore.deleteManifest(manifestKey);
+            } catch {
+              // Snapshot cleanup can be retried out of band.
+            }
+          }
+          if (createdSnapshotId) {
+            try {
+              await input.snapshotManager.deleteSnapshot(createdSnapshotId);
+            } catch {
+              // Managed snapshot tags allow later cleanup.
+            }
+          }
+        }
+      }
+
       await markSnapshotFailed({
         databaseUrl: input.databaseUrl,
         snapshotId: snapshot.id,
         errorCode: errorCode(error),
       });
-
-      if (!taskStopped && gatewayQuiesced) {
-        try {
-          await input.gatewayAdmin.unquiesce(gatewayIdentity);
-        } catch {
-          // Fail closed: the runtime remains quiesced and operator/reconciler can recover it.
-        }
-      }
 
       if (taskStopped) {
         await finishStandardRuntime({
