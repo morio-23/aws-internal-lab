@@ -29,8 +29,13 @@ export async function relayOutboxOnce(input: {
 
   for (const event of events) {
     try {
+      const body =
+        typeof event.payload_json === "string"
+          ? JSON.parse(event.payload_json)
+          : event.payload_json;
+
       await input.queue.send({
-        body: event.payload_json,
+        body,
         messageGroupId: event.aggregate_id,
         deduplicationId: event.id,
       });
