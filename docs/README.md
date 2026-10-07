@@ -14,8 +14,11 @@
 
 実装・レビュー時に要件定義書または基本設計書と解釈が衝突する場合は、企画意図を確認した上で文書間の不整合を解消し、いずれかを黙示的に無視しない。
 
+## サービス互換性管理
+
+- `service-compatibility.md` - 現行AWS全サービスのTarget Layer、Runtime、MiniStack対応、Snapshot対応、優先度を管理する正本
+
 ## 今後追加予定
 
-- `service-compatibility.md` - AWSサービス別 L1/L2/L3、Snapshot対応状況、Known Differences
 - `runbooks/` - 事故種別の具体Runbook
 - `adr/` - 重要なアーキテクチャ意思決定
