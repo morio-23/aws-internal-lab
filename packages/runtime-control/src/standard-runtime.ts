@@ -13,6 +13,7 @@ export type StandardRuntimeIdentity = {
   sessionId: string;
   virtualAccountId: string;
   enabledRegions: readonly string[];
+  restoreSnapshotId?: string;
 };
 
 export type StandardRuntimeStartResult = {
@@ -43,6 +44,8 @@ export type EcsStandardRuntimeProvisionerConfig = {
   taskDefinitionArn: string;
   subnetIds: readonly string[];
   securityGroupIds: readonly string[];
+  ebsInfrastructureRoleArn: string;
+  ebsSizeGiB?: number;
   platformPublicKeyPem?: string;
   client?: EcsSender;
   clientConfig?: ECSClientConfig;
@@ -60,6 +63,8 @@ export class EcsStandardRuntimeProvisioner
   readonly #taskDefinitionArn: string;
   readonly #subnetIds: readonly string[];
   readonly #securityGroupIds: readonly string[];
+  readonly #ebsInfrastructureRoleArn: string;
+  readonly #ebsSizeGiB: number;
   readonly #platformPublicKeyPem: string | undefined;
 
   constructor(config: EcsStandardRuntimeProvisionerConfig) {
@@ -86,6 +91,8 @@ export class EcsStandardRuntimeProvisioner
     this.#taskDefinitionArn = config.taskDefinitionArn;
     this.#subnetIds = config.subnetIds;
     this.#securityGroupIds = config.securityGroupIds;
+    this.#ebsInfrastructureRoleArn = config.ebsInfrastructureRoleArn;
+    this.#ebsSizeGiB = config.ebsSizeGiB ?? 8;
     this.#platformPublicKeyPem = config.platformPublicKeyPem;
   }
 
@@ -113,6 +120,23 @@ export class EcsStandardRuntimeProvisioner
           { key: "WorkspaceId", value: identity.workspaceId },
           { key: "SessionId", value: identity.sessionId },
           { key: "VirtualAccountId", value: identity.virtualAccountId },
+        ],
+        volumeConfigurations: [
+          {
+            name: "lab-state",
+            managedEBSVolume: {
+              roleArn: this.#ebsInfrastructureRoleArn,
+              volumeType: "gp3",
+              encrypted: true,
+              filesystemType: "ext4",
+              terminationPolicy: {
+                deleteOnTermination: false,
+              },
+              ...(identity.restoreSnapshotId
+                ? { snapshotId: identity.restoreSnapshotId }
+                : { sizeInGiB: this.#ebsSizeGiB }),
+            },
+          },
         ],
         overrides: {
           containerOverrides: [
