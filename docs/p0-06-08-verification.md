@@ -36,6 +36,8 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/persis
 - PlatformOperationsStackを追加し、SQS FIFO operation queue、FIFO DLQ、immutable ECR Worker repositoryをIaC化。
 - Managed EBS volumeへ `ManagedBy` / `WorkspaceId` / `SessionId` tagを付与。
 - Reconcilerへ、DB上activeでない・`available`・grace期間超過のmanaged EBS volume削除を追加。
+- Managed EBS Snapshotを `OwnerIds=self` + `ManagedBy=aws-internal-lab` で棚卸しし、DB上保護対象でない古いSnapshotを削除するReconcilerを追加。available/restoring/quarantinedと直近1時間のcreatingは保護する。
+- Runtime Task SGをDefault Deny egressへ変更。ECR/CloudWatch Logs interface endpoint:443と、S3 managed prefix list:443だけを許可する。
 - Gateway quiesce/drain protocolを追加。新規操作停止とin-flight=0をunit test対象とし、Operation WorkerのSuspend処理からquiesceを呼ぶよう結線した。
 - MiniStack 1.5.22のlive persist overlayを追加。Gatewayからloopbackでpersistし、filesystem sync後にEBS Snapshotを作成する非破壊順序へ変更した。
 - EBS Snapshot/manifest作成失敗時はStopTaskを実行せずGatewayをunquiesceする。DB integration testでこのrollbackを固定した。
@@ -43,7 +45,7 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/persis
 ## 実AWS Smoke Testチェックリスト
 
 - [ ] RuntimeStackを隔離した検証Accountへdeployし、2 AZ subnet、route table、NAT/IGWなし、4 endpoint、private DNSを確認する。
-- [ ] GatewayとMiniStackの固定image digestをECRへpushし、ECR pull/CloudWatch Logs送信がisolated subnetから成功することを確認する。
+- [ ] GatewayとMiniStackの固定image digestをECRへpushし、ECR pull/CloudWatch Logs送信がisolated subnetから成功することを確認する。Runtime Task SGのegressがInterface Endpoint:443とS3 managed prefix list:443以外へ通らないことも確認する。
 - [ ] Platform側VPC Peering作成、reciprocal route、BFF Security GroupをIaC化し、RuntimeStackのPeering parameterへ接続する。Platform/BFFからRuntime Gateway:8080へ到達し、Browser/他SGから到達できないことを確認する。
 - [ ] API startを実行し、TaskがFARGATE、public IPなし、Task Roleに業務AWS権限なし、privilegedなし、Docker socket mountなし、Workspace/Session/Virtual Account bindingありと確認する。
 - [ ] Lab Credentialから実AWS public endpointへの通信が失敗し、AWS credentialがLabへ渡されないことを確認する。
@@ -51,6 +53,7 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/persis
 - [ ] Taskを強制停止し、reconcilerがSessionをfailedにすることを確認する。
 - [ ] DB参照のない管理タグ付きTaskを作り、grace期間後にreconcilerが停止することを確認する。無関係Taskが停止されないことも確認する。
 - [ ] DB参照のない `ManagedBy=aws-internal-lab` のavailable EBS volumeを作り、grace期間後にreconcilerが削除すること、active volumeと無関係volumeを削除しないことを確認する。
+- [ ] failed/expired等でDB保護対象外となった管理EBS Snapshotを作り、grace期間後にreconcilerが削除要求すること、available/restoring/quarantinedおよび実行中creating Snapshotを削除しないことを確認する。
 - [ ] S3/DynamoDB/SQSの代表dataを作成し、Suspend時にGateway quiesce→MiniStack live persist→filesystem sync→EBS Snapshot completed→manifest checksum→DB availableの順になることを確認する。
 - [ ] 新TaskへResumeし、3サービスのdata、Virtual Account、ARNが維持されることを確認する。
 - [ ] EBS Snapshot作成失敗を注入し、StopTaskが呼ばれず元Runtimeがunquiesceされることを確認する。
@@ -58,9 +61,9 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/persis
 
 ## Blocker / known limitations
 
-1. ADR-0005の接続方式は確定しRuntime側IaCも追加したが、Platform側VPC Peering作成・reciprocal route・BFF SGのIaCは未実装。実AWS疎通は未確認。
+1. ADR-0005の接続方式は確定しRuntime側IaCも追加したが、Platform側VPC Peering作成・reciprocal route・BFF/Worker SGのIaCは未実装。実AWS疎通は未確認。Runtime側はDefault Deny egressへ変更済みで、deploy時にRegionのS3 managed prefix list IDをparameterとして渡す必要がある。
 2. SQS FIFO/DLQとWorker用ECRはPlatformOperationsStackへ追加した。Operation Worker ECS Service、Task Role、DB secret/network、Queue権限、Runtime Accountへの権限委譲は未整備。
 3. MiniStack標準機能はshutdown保存のみだが、ADR-0006のPhase 0 overlayでlive persistを追加し、Suspendを `quiesce -> live persist -> EBS Snapshot -> manifest -> StopTask` に変更した。Snapshot/manifest失敗時は元Taskを止めずunquiesceするため、非破壊rollbackはローカル実装上成立した。実EBS上でのapplication consistencyはAWS Smoke未確認。
-4. Managed EBS volumeへの所有tagとorphan cleanupは実装したが、実ECS managed EBSでtag/status/削除が想定通りになることはAWS Smokeで確認が必要。
+4. Managed EBS volume/Snapshotの所有tagとorphan cleanupは実装したが、実ECS managed EBSでtag/status/削除、およびpending EBS Snapshot削除要求が想定通りになることはAWS Smokeで確認が必要。
 5. EBS Snapshot作成、task volume attach、Fargate上のMiniStack graceful shutdown、Endpoint経由image pullは実AWSで未確認。Issue #9はOpenのまま維持する。
 6. MiniStack overlayはupstream private/internal symbolへ依存するため、1.5.22からのversion更新時に互換性試験が必要。将来upstreamがlive persistを正式提供した場合はoverlayを廃止する。
