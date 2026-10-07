@@ -378,6 +378,9 @@ serviceCode: s3
 displayName: Amazon S3
 targetLevel: L2
 runtimeType: standard
+runtimeRequirement: standard
+capacityProfile: null
+capacityUnits: 0
 provider: ministack
 ministackCurrent: true
 snapshotSupport: full
@@ -387,7 +390,7 @@ consoleVerifiedAt: null
 knownLimitations: []
 ```
 
-実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を追加し、**TargetとCurrent implementationを分離**する。
+実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を追加し、**TargetとCurrent implementationを分離**する。Advanced対応サービスでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` をOperation単位で管理し、Worker Fleet PlannerのACU計算に利用する。
 
 ## 11. 更新ルール
 
