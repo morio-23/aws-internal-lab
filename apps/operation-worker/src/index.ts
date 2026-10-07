@@ -5,3 +5,5 @@ export * from "./operation-queue.js";
 
 export * from "./standard-runtime-handler.js";
 export * from "./worker-cycle.js";
+
+export * from "./runtime-gateway-admin.js";
