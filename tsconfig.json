@@ -7,7 +7,6 @@
     "apps/**/*.ts",
     "packages/**/*.ts",
     "tests/**/*.ts",
-    "scripts/**/*.ts",
-    "infra/**/*.ts"
+    "scripts/**/*.ts"
   ]
 }
