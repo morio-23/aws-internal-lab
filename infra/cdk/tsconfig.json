@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "exactOptionalPropertyTypes": false
+  },
+  "include": [
+    "bin/**/*.ts",
+    "lib/**/*.ts",
+    "test/**/*.ts"
+  ]
+}
