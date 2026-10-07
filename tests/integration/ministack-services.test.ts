@@ -208,6 +208,98 @@ test("MiniStack vertical slice preserves account and Tokyo/Osaka isolation", asy
       payload: { queueUrl: queue.queueUrl },
     }),
     providers: [provider],
-  })) as { Messages?: Array<{ Body?: string }> };
+  })) as {
+    Messages?: Array<{ Body?: string; ReceiptHandle?: string }>;
+  };
   assert.equal(received.Messages?.[0]?.Body, "Osaka message");
+  const receiptHandle = received.Messages?.[0]?.ReceiptHandle;
+  assert.ok(receiptHandle);
+
+  await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-3",
+      serviceCode: "sqs",
+      operation: "DeleteMessage",
+      payload: { queueUrl: queue.queueUrl, receiptHandle },
+    }),
+    providers: [provider],
+  });
+  await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-3",
+      serviceCode: "sqs",
+      operation: "DeleteQueue",
+      payload: { queueUrl: queue.queueUrl },
+    }),
+    providers: [provider],
+  });
+
+  await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-1",
+      serviceCode: "dynamodb",
+      operation: "DeleteItem",
+      payload: { tableName, key: { id: "1" } },
+    }),
+    providers: [provider],
+  });
+  await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-1",
+      serviceCode: "dynamodb",
+      operation: "DeleteTable",
+      payload: { tableName },
+    }),
+    providers: [provider],
+  });
+
+  await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-1",
+      serviceCode: "s3",
+      operation: "DeleteObject",
+      payload: { bucketName, key: "hello.txt" },
+    }),
+    providers: [provider],
+  });
+  await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-1",
+      serviceCode: "s3",
+      operation: "DeleteBucket",
+      payload: { bucketName },
+    }),
+    providers: [provider],
+  });
+
+  const tablesAfterDelete = (await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-1",
+      serviceCode: "dynamodb",
+      operation: "ListTables",
+    }),
+    providers: [provider],
+  })) as { TableNames?: string[] };
+  assert.equal(tablesAfterDelete.TableNames?.includes(tableName), false);
+
+  const queuesAfterDelete = (await dispatchLabRequest({
+    binding: primary,
+    request: request(primary, {
+      region: "ap-northeast-3",
+      serviceCode: "sqs",
+      operation: "ListQueues",
+    }),
+    providers: [provider],
+  })) as { QueueUrls?: string[] };
+  assert.equal(
+    queuesAfterDelete.QueueUrls?.some((url) => url.includes(queueName)) ?? false,
+    false,
+  );
 });
