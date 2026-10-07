@@ -146,7 +146,7 @@ test("gateway rejects real AWS-like and incorrect lab credentials before provide
     }),
     (error) =>
       error instanceof LabGatewayError &&
-      error.code === "INVALID_ACCOUNT",
+      error.code === "REAL_AWS_CREDENTIAL_REJECTED",
   );
 
   await assert.rejects(
