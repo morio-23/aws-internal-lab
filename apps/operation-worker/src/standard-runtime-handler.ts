@@ -482,10 +482,38 @@ export async function cleanupOrphanStandardTasks(input: {
   return { inspected: tasks.length, stopped };
 }
 
+export async function cleanupOrphanStandardVolumes(input: {
+  snapshotManager: StandardSnapshotManager;
+  activeVolumeIds: readonly string[];
+  now?: Date;
+  graceMs?: number;
+}): Promise<{ inspected: number; deleted: number }> {
+  const volumes = await input.snapshotManager.listManagedVolumes();
+  const active = new Set(input.activeVolumeIds);
+  const now = input.now ?? new Date();
+  const graceMs = input.graceMs ?? 10 * 60_000;
+  let deleted = 0;
+
+  for (const volume of volumes) {
+    if (active.has(volume.volumeId)) continue;
+    if (now.getTime() - volume.createTime.getTime() < graceMs) continue;
+    await input.snapshotManager.deleteVolume(volume.volumeId);
+    deleted += 1;
+  }
+
+  return { inspected: volumes.length, deleted };
+}
+
 export async function reconcileStandardRuntimes(input: {
   databaseUrl: string;
   provisioner: StandardRuntimeProvisioner;
-}): Promise<{ checked: number; failed: number; orphanTasksStopped: number }> {
+  snapshotManager?: StandardSnapshotManager;
+}): Promise<{
+  checked: number;
+  failed: number;
+  orphanTasksStopped: number;
+  orphanVolumesDeleted: number;
+}> {
   const runtimes = await listActiveStandardRuntimes({
     databaseUrl: input.databaseUrl,
   });
@@ -523,5 +551,19 @@ export async function reconcileStandardRuntimes(input: {
       .filter((value): value is string => Boolean(value)),
   });
 
-  return { checked: runtimes.length, failed, orphanTasksStopped: cleanup.stopped };
+  const volumeCleanup = input.snapshotManager
+    ? await cleanupOrphanStandardVolumes({
+        snapshotManager: input.snapshotManager,
+        activeVolumeIds: runtimes
+          .map((runtime) => runtime.stateVolumeRef)
+          .filter((value): value is string => Boolean(value)),
+      })
+    : { inspected: 0, deleted: 0 };
+
+  return {
+    checked: runtimes.length,
+    failed,
+    orphanTasksStopped: cleanup.stopped,
+    orphanVolumesDeleted: volumeCleanup.deleted,
+  };
 }
