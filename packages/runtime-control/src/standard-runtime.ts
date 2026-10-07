@@ -142,6 +142,16 @@ export class EcsStandardRuntimeProvisioner
               terminationPolicy: {
                 deleteOnTermination: false,
               },
+              tagSpecifications: [
+                {
+                  resourceType: "volume",
+                  tags: [
+                    { key: "ManagedBy", value: "aws-internal-lab" },
+                    { key: "WorkspaceId", value: identity.workspaceId },
+                    { key: "SessionId", value: identity.sessionId },
+                  ],
+                },
+              ],
               ...(identity.restoreSnapshotId
                 ? { snapshotId: identity.restoreSnapshotId }
                 : { sizeInGiB: this.#ebsSizeGiB }),
