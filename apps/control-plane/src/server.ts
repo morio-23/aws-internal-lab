@@ -165,6 +165,10 @@ export const server = createServer(async (request, response) => {
         json(response, 404, { error: { code: "WORKSPACE_NOT_FOUND" } });
         return;
       }
+      if (workspace.activeOperationId) {
+        json(response, 409, { error: { code: "WORKSPACE_TRANSITIONING" } });
+        return;
+      }
 
       const runtime = await getActiveRuntimeForWorkspace({
         databaseUrl,
@@ -240,7 +244,7 @@ export const server = createServer(async (request, response) => {
     }
 
     const lifecycleMatch = request.url?.match(
-      /^\/api\/v1\/workspaces\/([0-9a-f-]+)\/(start|stop)$/,
+      /^\/api\/v1\/workspaces\/([0-9a-f-]+)\/(start|stop|suspend|resume)$/,
     );
     if (lifecycleMatch && request.method === "POST") {
       if (!hasPermission(identity, "workspace:mutate-own")) {
