@@ -123,19 +123,29 @@ Schedulerはmemoryを第一制約、vCPUを第二制約としてbin-packする�
 
 ### 7. Scale Out / Scale In
 
-Scale Out条件:
+Worker FleetはAdvanced Capacity Unit (ACU)で容量を管理する。
 
-- placement可能なWorkerが存在しない
-- memory reservationが閾値を超過
-- active microVM数がhost上限へ到達
+初期値:
 
-Scale In条件:
+- small = 1 ACU
+- medium = 2 ACU
+- large = 4 ACU
 
-- Worker上のactive microVMが0
-- drain完了
-- minimum idle period経過
+必要容量は `active + starting + pending + reserve` ACU とする。
 
-Active microVMを別Workerへlive migrationすることは初期要件としない。
+初期閾値:
+
+- Fleet利用率80%が5分継続した場合はproactive Scale Out
+- pending ACUがfree ACUを超過した場合はimmediate Scale Out
+- placement failure時はimmediate Scale Out
+- active/starting microVMが0のWorkerが15分idleでScale In候補
+- Fleet利用率45%未満が30分継続でConsolidation候補
+
+reserve ACUは、active 0-3で0、4-6で1、7-12で2、13以上でmax(2, ceil(active × 15%))とする。
+
+Scale Out時は必要ACUを満たすWorker構成から推定時間単価が最小となる組合せを選択する。同額の場合はHost数が少ない構成を優先する。
+
+利用中microVMをコスト最適化のみを理由に強制移動しない。Consolidation対象Workerはdrainingとし、既存LabがSuspend/Stopして空になった時点でTerminateする。
 
 Worker障害時は、そのLabをfailedとして扱い、最新Snapshotから別WorkerへResumeする。
 
@@ -201,7 +211,7 @@ Advanced → Suspend:
 8. local disk削除
 9. placement解放
 
-Advanced → Standardへの自動降格は行わない。Advanced-only resourceが存在しないことを検証した上で、将来の明示操作として提供可能とする。
+Advanced → Standardへの復帰は利用中には行わない。Advanced-only resource/workloadが存在しない場合は standardEligible として管理し、次回Suspend/Resume、Idle timeout後のResume、または明示的な最適化操作でFargateへ復帰可能とする。
 
 ### 12. Host Security
 
