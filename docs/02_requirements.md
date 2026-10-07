@@ -599,6 +599,36 @@ Browser requestからBFF、Lab Operation、Lab Gateway、Provider、Auditまで�
 
 Platform固有ErrorとAWS Provider互換Errorを識別可能な共通error formatを持つこと。
 
+## 6.13 Lifecycle Reliability
+
+### FR-LIFE-001 Serialized lifecycle
+
+同一WorkspaceのStart / Reset / Suspend / Resume / Delete / Runtime切替を順序化し、同時実行による二重Runtimeや状態破壊を防止すること。
+
+### FR-LIFE-002 Transactional dispatch
+
+Lifecycle OperationのDB記録と非同期実行要求の間で取りこぼしが発生しない仕組みを持つこと。
+
+### FR-LIFE-003 Compensation
+
+Provision / Suspend / Resume / Runtime Promotionの途中失敗時に、作成途中resourceのcleanup、capacity解放、元Snapshot保持等の補償処理を実行できること。
+
+### FR-LIFE-004 Reconciliation
+
+DB metadata、ECS/EC2/microVM、Snapshot Storeの不整合を定期検出し、自動修復またはOperator通知できること。
+
+### FR-LIFE-005 Snapshot consistency level
+
+Snapshotごとにapplication-consistent / configuration-consistent / crash-consistent等の整合性レベルを管理できること。
+
+### FR-LIFE-006 Workspace-wide snapshot
+
+東京・大阪双方を含むWorkspace全体を一つのSnapshot境界として保存できること。
+
+### FR-LIFE-007 Time semantics
+
+Suspend中も実時間が進むことを前提に、TTL、expiry、visibility timeout等の時刻依存状態をResume時に一貫して評価できること。
+
 ## 7. 非機能要件
 
 ## 7.1 セキュリティ
@@ -707,15 +737,142 @@ AWS Management Console の学習上重要な画面変更を定期的に確認し
 
 採用する Lab Engine version ごとに Snapshot 作成・復元の回帰テストを実施可能であること。
 
+## 7.6 ネットワーク・実行基盤
+
+### NFR-NET-001 Account separation
+
+ProductionのPlatform、Runtime、Snapshot/Dataを少なくとも論理的に別AWS Accountへ分離できること。
+
+### NFR-NET-002 Runtime no internet
+
+Runtime VPCはPublic IPおよび任意Internet egressを標準で持たないこと。
+
+### NFR-NET-003 Private control path
+
+PlatformからRuntimeへの管理通信はprivate network上で行い、Runtime GatewayをPublic Internetへ公開しないこと。
+
+### NFR-NET-004 Managed service endpoints
+
+ECR、S3、CloudWatch等へのRuntime管理通信はVPC Endpoint等のprivate pathを優先すること。
+
+## 7.7 可用性・DR
+
+### NFR-DR-001 Control Plane Multi-AZ
+
+Control Plane Web/API、Operation Worker、DBは単一AZ障害で全停止しない構成とすること。
+
+### NFR-DR-002 Lab non-HA
+
+個別Lab RuntimeはHAを保証しないことを利用者へ明示し、障害時はSnapshotから再開できる設計とすること。
+
+### NFR-DR-003 Platform physical DR
+
+Platform自身のPhysical Region障害に対するRecovery Regionとして大阪 `ap-northeast-3` を使用可能なIaC/Runbookを整備すること。
+
+### NFR-DR-004 Recovery objective
+
+初期目標としてPlatform metadataはRPO 15分以内、RTO 4時間以内を目標とすること。社内BCP基準がより厳しい場合はそちらを優先すること。
+
+### NFR-DR-005 Snapshot regional boundary
+
+Snapshot payloadのCross-Region複製は、機密データPurge要件と整合する削除保証が確立するまで初期必須要件としないこと。
+
+### NFR-DR-006 Recovery rehearsal
+
+Platform DRのrestore rehearsalを定期実施可能なこと。
+
+## 7.8 Capacity / Cost
+
+### NFR-COST-001 Runtime profiles
+
+Standard / Advanced Runtimeは定義済みresource profileから選択し、利用者が任意にhost resourceを指定できないこと。
+
+### NFR-COST-002 Scale to zero
+
+Advanced Worker Poolは利用がない場合に0台まで縮退できること。
+
+### NFR-COST-003 Hard cost guardrail
+
+Budget通知とは別に、Worker数、総ACU、User ACU、active Lab数、TTL、Snapshot Quota、推定Worker時間単価等でhard limitを設定できること。
+
+### NFR-COST-004 Cost attribution
+
+Standard Runtime、Advanced ACU、Snapshot保存量をWorkspace/User単位で内部集計できること。
+
+### NFR-COST-005 Initial policy
+
+初期値として以下をConfiguration as Codeで設定可能とすること。
+
+- active Workspace / User: 1
+- Advanced max ACU / User: 4
+- Snapshot count / Workspace: 3
+- Snapshot retention default: 7日
+- Snapshot retention maximum: 30日
+- Idle auto-Suspend: 30分
+- Runtime hard TTL: 8時間
+
+## 7.9 Observability
+
+### NFR-OBS-001 Structured telemetry
+
+Platform/Runtime運用logをstructured dataとして記録し、Correlation ID、Workspace、Session、Operation、Runtimeを関連付けられること。
+
+### NFR-OBS-002 Lab telemetry separation
+
+Platform運用Telemetryと、利用者がLab内で生成するCloudWatch相当データを分離すること。
+
+### NFR-OBS-003 Metrics
+
+API、Lifecycle、Worker ACU、Snapshot、Security Guardrail、Costに関する主要metricを取得できること。
+
+### NFR-OBS-004 Trace
+
+BFFからProviderまでtrace contextを伝播できること。ただし利用者Payload/Secretをtraceへ保存しないこと。
+
+### NFR-OBS-005 Alert
+
+Control Plane障害、Queue滞留、Worker heartbeat loss、Snapshot失敗、orphan resource、cross-workspace access、real AWS誤到達、cost limit接近を通知できること。
+
+## 7.10 CI/CD・Release
+
+### NFR-CICD-001 OIDC deployment
+
+CI/CDからAWSへ長期Access Keyを保存せず、OIDC federation等の短期Credentialを利用すること。
+
+### NFR-CICD-002 Quality gate
+
+Production deploy前にunit/integration/security/license/SBOM/IaC/Compatibility/Snapshot regressionを実行可能とすること。
+
+### NFR-CICD-003 Immutable artifact
+
+Container image、MiniStack、Worker Agent、microVM rootfs、Worker AMIをversion/digestで一意に識別できること。
+
+### NFR-CICD-004 Safe DB migration
+
+DB schema変更はexpand/contract等、旧新Applicationが一時共存可能な方式を原則とすること。
+
+### NFR-CICD-005 Engine upgrade gate
+
+MiniStack upgrade時にP0/P1 API、cross-service integration、旧Snapshot restore、security regressionを検証すること。
+
+### NFR-CICD-006 Rollback
+
+Application、Worker AMI、MiniStack engineを直前の検証済みartifactへ戻せること。
+
 ## 8. データ要件
 
 Platform 側で最低限保持するデータは以下とする。
 
 - User
-- Role
+- RoleAssignment
+- LabWorkspace
 - LabSession
 - LabRuntime
+- LabOperation
 - LabSnapshot
+- WorkerHost
+- WorkerAllocation
+- ProviderRoute
 - ServiceCapability
 - CompatibilityNote
 - QuotaPolicy
@@ -810,6 +967,12 @@ Snapshot payload 本体は Aurora に保存しない。
 27. 同じIdempotency KeyによるLifecycle API再送で二重Runtime/Snapshotを作成しない。
 28. Learner / Operator / Administrator / SecurityAuditorの権限分離とowner checkが確認できる。
 29. Correlation IDにより利用者操作からProvider/Auditまで追跡でき、Payload本文は記録されない。
+30. Control Planeの単一Task/AZ障害でサービス全体が停止しない構成が確認できる。
+31. Lifecycle Operation失敗時にpartial Runtime/Allocationをcleanupし、元Snapshotを破壊しない。
+32. Reconcilerがorphan Runtime / stale Worker Allocation / Snapshot不整合を検出できる。
+33. Platform/Runtime Telemetryと利用者Lab内CloudWatch相当データが分離される。
+34. Production release artifactのcommit、image digest、MiniStack version、schema version、SBOMを追跡できる。
+35. Virtual DR演習とPlatform自身のPhysical DRがUI/運用上区別される。
 
 ## 12. 後続要件候補
 
