@@ -54,7 +54,7 @@ export class AwsStandardSnapshotManager implements StandardSnapshotManager {
   constructor(config: AwsStandardSnapshotManagerConfig = {}) {
     this.#client = config.client ?? new EC2Client(config.clientConfig ?? {});
     this.#pollIntervalMs = config.pollIntervalMs ?? 2_000;
-    this.#maxPollAttempts = config.maxPollAttempts ?? 150;
+    this.#maxPollAttempts = config.maxPollAttempts ?? 450;
   }
 
   async createSnapshot(input: {
@@ -94,6 +94,11 @@ export class AwsStandardSnapshotManager implements StandardSnapshotManager {
       const snapshot = described.Snapshots?.[0];
       if (snapshot?.State === "completed") return { snapshotId };
       if (snapshot?.State === "error") {
+        try {
+          await this.deleteSnapshot(snapshotId);
+        } catch {
+          // Managed snapshot tags allow out-of-band cleanup if delete fails.
+        }
         throw new Error(
           "EBS_SNAPSHOT_FAILED:" + (snapshot.StateMessage ?? "unknown"),
         );
@@ -106,6 +111,11 @@ export class AwsStandardSnapshotManager implements StandardSnapshotManager {
       }
     }
 
+    try {
+      await this.deleteSnapshot(snapshotId);
+    } catch {
+      // A pending managed snapshot may finish later; tags keep it discoverable.
+    }
     throw new Error("EBS_SNAPSHOT_TIMEOUT");
   }
 
