@@ -1975,7 +1975,886 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 16. Audit保存期間と閲覧権限
 17. Incident時の責任分界と利用規約
 
-## 19. 段階リリース
+## 19. ネットワーク物理設計
+
+### 19.1 AWS Account分離
+
+本番環境は少なくとも以下の3 AWS Accountへ分離する。
+
+| Account | 主用途 |
+| --- | --- |
+| Platform Account | ALB、Web/BFF、Control Plane、Aurora |
+| Runtime Account | Standard Fargate、Runtime Gateway、Advanced Worker Pool |
+| Data Account | Snapshot S3、KMS、長期Audit archive |
+
+ProductionとStagingは同一Account/VPCを共有しない。
+
+Developer環境はLocal/MiniStackを基本とし、共有DEV AWS環境が必要な場合もProductionとは別Accountとする。
+
+### 19.2 Physical Region
+
+Platform本番のPrimary Physical Regionは `ap-northeast-1` とする。
+
+Virtual Regionの東京/大阪はPhysical Regionとは別概念であり、通常のLab実行はPrimary Physical Region内で両Virtual Regionをsimulationする。
+
+### 19.3 VPC
+
+初期CIDR例:
+
+```text
+Platform VPC  10.20.0.0/16
+Runtime VPC   10.30.0.0/16
+```
+
+CIDRは社内IPAMと重複しない値へ最終調整する。
+
+Platform VPC:
+
+- ALB subnet: 2 AZ以上
+- ECS private subnet: 2 AZ以上
+- Aurora private DB subnet: 2 AZ以上
+- Management endpoint subnet
+
+Runtime VPC:
+
+- Standard Fargate subnet: 2 AZ以上
+- Advanced Worker subnet: 2 AZ以上
+- Runtime Gateway subnet: 2 AZ以上
+- Public subnetは原則作成しない
+- NAT Gatewayは原則配置しない
+
+### 19.4 Platform / Runtime接続
+
+初期構成は同一Physical RegionのVPC Peeringを第一候補とする。
+
+理由:
+
+- VPC数が少なくTransit Gatewayを必要としない
+- 常時接続コストを抑えられる
+- Platform / Runtime間のrouteを明示限定できる
+
+```text
+Browser
+  ↓
+ALB
+  ↓
+BFF / Platform VPC
+  ↓ VPC Peering
+Internal Runtime Gateway
+  ↓
+Target Lab Runtime
+```
+
+Runtime GatewayはInternal NLB等のprivate endpoint配下へ置き、Browserへ公開しない。
+
+将来VPC/Account数が増え、接続管理が複雑化した場合にのみTransit Gateway / VPC Lattice等へ移行する。
+
+### 19.5 Runtime VPC Endpoint
+
+Runtime Accountから実AWSへ必要な管理通信はVPC Endpointを優先する。
+
+初期候補:
+
+- S3 Gateway Endpoint
+- ECR API Interface Endpoint
+- ECR DKR Interface Endpoint
+- CloudWatch Logs Interface Endpoint
+- SSM / SSMMessages / EC2Messages: Break Glass運用時のみ
+- KMS: Runtime側で直接KMS APIが必要な場合のみ
+
+Endpoint PolicyでもRuntime AccountがアクセスできるAWS resourceを限定する。
+
+### 19.6 DNS
+
+Platform/Runtime内部通信用にPrivate Hosted Zoneを利用する。
+
+例:
+
+```text
+runtime.internal
+worker.runtime.internal
+lab-gateway.runtime.internal
+```
+
+Lab内AWS SDKのAWS互換endpointはLab Gatewayへ明示設定し、public `amazonaws.com` endpointを直接名前解決・到達させる構成にしない。
+
+### 19.7 Security Group
+
+基本通信:
+
+| Source | Destination | Port | Purpose |
+| --- | --- | ---: | --- |
+| Corporate/Approved ingress | ALB | 443 | Web |
+| ALB | BFF ECS | app port | Web/API |
+| BFF | Aurora | 5432 | metadata DB |
+| BFF/Control Plane | Runtime Gateway | 443 | Lab control |
+| Runtime Gateway | Fargate Lab | Lab Gateway port | Standard Runtime |
+| Runtime Gateway | Worker Agent | management port | Advanced control |
+| Worker Agent | microVM | Lab Gateway port | Advanced Runtime |
+
+0.0.0.0/0 outboundをRuntimeへ付与しない。
+
+### 19.8 microVM Network
+
+各Advanced Lab microVMは専用TAP / network namespaceを持つ。
+
+Host側Firewallで以下を明示denyする。
+
+- guest → IMDS
+- guest → Host loopback/management
+- guest → 他microVM
+- guest → corporate network
+- guest → Internet direct
+- guest → AWS public service endpoint
+
+許可するのはLab-local service communication、Runtime Gateway、必要時のLab-aware Egress Proxyのみとする。
+
+## 20. Lifecycle / 排他・失敗補償設計
+
+### 20.1 永続単位
+
+`LabWorkspace` を永続単位、`LabSession` を1回のActive Runtime期間、`LabOperation` をLifecycle変更処理単位とする。
+
+1 Workspaceに同時に存在可能なActive Sessionは1件とする。
+
+### 20.2 Operation Queue
+
+Lifecycle mutationは同期HTTP request内で直接完結させず、Operation Queueへ投入する。
+
+推奨構成:
+
+```text
+BFF
+ ↓ DB transaction
+LabOperation + Outbox
+ ↓
+Outbox Relay
+ ↓
+SQS FIFO
+ MessageGroupId = workspaceId
+ ↓
+Operation Worker
+ ↓
+ECS / EC2 / Snapshot
+```
+
+SQS FIFOのMessageGroupIdをworkspaceIdとし、同一WorkspaceのLifecycle operationを順序化する。
+
+AuroraへのOperation記録とqueue送信の不整合を防ぐためTransactional Outboxを使用する。
+
+### 20.3 Workspace Lock
+
+Workspaceには以下を持つ。
+
+- lifecycleVersion
+- activeOperationId
+
+Lifecycle mutation受付時にoptimistic lockを行い、activeOperationIdが存在する場合は競合する新規mutationを拒否する。
+
+Resource CRUDはLifecycle lock中、原則read-onlyとする。
+
+### 20.4 Operation State
+
+```text
+queued
+ ↓
+waitingForCapacity
+ ↓
+running
+ ├→ compensating → failed
+ └→ succeeded
+```
+
+追加状態:
+
+- cancelled
+- timedOut
+
+### 20.5 Retry
+
+各stepはidempotentにする。
+
+- transient error: exponential backoff + jitter
+- permanent validation error: retryしない
+- retry上限超過: compensationへ遷移
+
+AWS resource IDやRuntime IDはstep resultとしてLabOperationへ記録し、retry時に再作成しない。
+
+### 20.6 Compensation
+
+代表例:
+
+Provision失敗:
+
+1. 作成途中Runtime停止
+2. temporary volume/disk削除
+3. worker allocation解放
+4. session failed
+5. Workspaceはinactive/suspendedへ戻す
+
+Suspend失敗:
+
+- Snapshotがavailableになるまでは元Runtimeを原則維持する。
+- Snapshot失敗時に元Runtimeを先に破棄しない。
+
+Resume失敗:
+
+- 元Snapshotを変更・削除しない。
+- partial Runtimeを削除する。
+- Workspaceをsuspendedへ戻す。
+
+Standard → Advanced Promotion失敗:
+
+- source Snapshotを保持する。
+- Advanced partial resourceを削除する。
+- 可能ならStandardへrestoreし、不可ならsuspendedで停止する。
+
+### 20.7 Reconciliation
+
+1分周期を初期値としてControl Plane Reconcilerを実行する。
+
+検査対象:
+
+- DB上activeだがRuntimeが存在しない
+- Runtimeが存在するがDB Sessionがない
+- allocated microVMがheartbeatなし
+- available Snapshotにobjectがない
+- expired Snapshotが残存
+- idle Workerが残存
+- Operationがtimeout超過
+
+自動修復できないものはOperator alertへ送る。
+
+## 21. Snapshot整合性設計
+
+### 21.1 Consistency Level
+
+Snapshotごとに以下を記録する。
+
+- `application-consistent`
+- `configuration-consistent`
+- `crash-consistent`
+
+Standard Runtimeは原則application-consistentを目標とする。
+
+Advanced Serviceで完全quiesceができない場合はCapability Matrixにlevelを明示する。
+
+### 21.2 Quiesce Protocol
+
+Workspace全体を1つのSnapshot境界とする。
+
+```text
+1. Gateway mutation reject
+2. 新規Event/Lambda/Task開始停止
+3. in-flight request drain
+4. service-specific quiesce
+5. DB/cache flush
+6. MiniStack/Internal state flush
+7. filesystem fsync
+8. Snapshot payload生成
+9. checksum
+10. manifest publish
+```
+
+in-flight drain timeoutは初期30秒とし、超過時は対象処理を失敗扱いとしてSnapshot続行可否をservice capabilityで判断する。
+
+### 21.3 Snapshot Transaction Boundary
+
+Snapshotの `available` 遷移はmanifest、全payload object、checksum検証完了後のみ行う。
+
+途中uploadは `creating/<snapshotId>/` 等のtemporary namespaceへ保存し、available publish後にのみrestore対象とする。
+
+### 21.4 Cross-Region State
+
+東京・大阪双方のVirtual Region stateを1 Workspace Snapshotへ含める。
+
+Cross-Region replication queueを持つserviceでは以下のいずれかをmanifestへ記録する。
+
+- replication drained
+- pending replication preserved
+- replication unsupported
+
+DR演習で意図的にlagを発生させている場合はpending stateを保持し、Resume後もRPO差異を再現できることを目標とする。
+
+### 21.5 Time-sensitive State
+
+Runtime停止中もwall clockは進む。
+
+TTL、credential expiry、queue visibility timeout等の時刻依存状態は絶対timestampで保存し、Resume時に自然に期限切れ評価する。
+
+Running process memory、open TCP session、in-flight Lambda invocation等は保存保証しない。
+
+### 21.6 Snapshot Format
+
+初期論理形式:
+
+```text
+manifest.json
+engine-state/
+service-data/
+internal-state/
+advanced-data/
+```
+
+Archive/圧縮形式は実測で決定するが、manifest自体は非圧縮JSONとして先頭検証可能にする。
+
+## 22. データ論理設計
+
+### 22.1 DB共通
+
+Aurora PostgreSQLを使用する。
+
+- ID: application-generated UUIDv7
+- timestamp: `timestamptz` / UTC
+- JSON拡張属性: `jsonb`
+- FKを原則利用する
+- external-facing IDに連番を使用しない
+- migrationはforward compatibleなexpand/contract方式を採用する
+
+### 22.2 主要Entity
+
+```text
+User
+ ├─< RoleAssignment
+ └─< LabWorkspace
+       ├─< LabSession
+       │    └─1 LabRuntime
+       ├─< LabOperation
+       ├─< LabSnapshot
+       ├─< WorkerAllocation
+       └─< Incident
+
+ServiceCapability
+ └─< ProviderRoute
+
+QuotaPolicy
+WorkerHost
+ └─< WorkerAllocation
+
+Incident
+ └─< BreakGlassGrant
+```
+
+### 22.3 制約
+
+- `User.externalSubject`: unique
+- `LabWorkspace.virtualAccountId`: unique
+- Workspaceごとのactive Session: max 1
+- Workspaceごとのactive Lifecycle Operation: max 1
+- Snapshot ID: unique
+- ProviderRoute: `serviceCode + operation + capabilityVersion` unique
+- WorkerAllocation: Workspaceごとのactive allocation max 1
+
+partial unique index等でDBレベルでも保証する。
+
+### 22.4 LabWorkspace
+
+追加項目:
+
+- lifecycleVersion
+- activeOperationId
+- primaryVirtualRegion
+- drScenarioState
+- createdAt / updatedAt / deletedAt
+
+Workspace削除は利用者UI上は論理削除を経由可能とするが、Snapshot/Payload purgeは別の物理削除workflowで完了を追跡する。
+
+### 22.5 WorkerHost / Allocation
+
+WorkerHost:
+
+- id
+- ec2InstanceId
+- availabilityZone
+- workerClass
+- usableAcu
+- allocatedAcu
+- status
+- heartbeatAt
+- drainStartedAt
+
+WorkerAllocation:
+
+- id
+- workspaceId
+- sessionId
+- workerHostId
+- microvmId
+- profile
+- acu
+- status
+- createdAt
+- releasedAt
+
+### 22.6 ProviderRoute
+
+- id
+- serviceCode
+- operation
+- provider
+- runtimeRequirement
+- capacityProfile
+- enabled
+- dangerous
+- integrationOwner
+- capabilityVersion
+
+### 22.7 Outbox
+
+Transactional Outbox:
+
+- id
+- aggregateType
+- aggregateId
+- eventType
+- payloadJson
+- createdAt
+- publishedAt
+- retryCount
+
+payloadJsonへSecret/User Payloadを入れない。
+
+### 22.8 Audit
+
+大量Audit本文をAuroraへ永久保持しない。
+
+Auroraは検索用の直近index/metadataを保持し、長期AuditはCloudWatch Logs/S3 archive等へ送る。
+
+## 23. 可用性・Platform DR設計
+
+### 23.1 Control Plane HA
+
+Production Control Plane:
+
+- ALB: 2 AZ以上
+- Web/BFF ECS Service: min 2 Task、AZ分散
+- Operation Worker: min 2 Task
+- Aurora PostgreSQL: writer + readerを異なるAZへ配置
+- S3/KMS/ECR等のRegional managed serviceを利用
+
+Production Auroraは通常時auto-pauseさせない。
+
+### 23.2 Runtime
+
+Individual Lab RuntimeはHA対象としない。
+
+- Standard Fargate Task障害: current Snapshotから再起動可能
+- Advanced Worker障害: affected Labをfailedとし、latest Snapshotから別WorkerへResume
+- 未Snapshot変更は消失し得る
+
+これは利用者へLabの耐久性モデルとして明示する。
+
+### 23.3 Advanced Worker AZ
+
+Advanced Worker ASGは2 AZ以上へ配置する。
+
+新規Worker起動時はcapacityとcostだけでなく、可能な範囲でAZ偏りを抑制する。
+
+1 Worker障害/AZ障害で同時に失うLab数を抑えるため `maxMicroVmsPerWorker` を維持する。
+
+### 23.4 Physical Region DR
+
+Virtual DR Learningとは別に、Platform自身のRegional Disasterを以下で扱う。
+
+初期方針は**Backup and Restore**とする。
+
+Primary Physical Region:
+
+```text
+ap-northeast-1 / Tokyo
+```
+
+Recovery Physical Region:
+
+```text
+ap-northeast-3 / Osaka
+```
+
+Recovery Regionへ常時フルRuntimeを起動しない。
+
+事前準備:
+
+- IaCを両Regionへdeploy可能にする
+- ECR image / build artifactをRecovery Regionから取得可能にする
+- Aurora backup/snapshotのcross-region restore手順を検証する
+- DNS切替手順をRunbook化する
+- KMS key / secret再構成手順を用意する
+
+Snapshot payloadは機密データ混入時のPurge要件を優先し、初期リリースでは自動Cross-Region Replicationしない。
+
+したがってPhysical Tokyo Region全体が利用不能な間、既存Lab SnapshotのResumeは保証しない。
+
+将来、削除連携を保証できるapplication-level dual-write方式を導入した場合のみSnapshot payloadのRegion冗長化を行う。
+
+### 23.5 Initial Recovery Objectives
+
+| 対象 | RPO目標 | RTO目標 |
+| --- | --- | --- |
+| Platform metadata | 15分以内 | 4時間以内 |
+| Application source/IaC | Git正本 | 2時間以内 |
+| Container/build artifact | release単位 | 2時間以内 |
+| Active unsaved Lab | last Snapshot | best effort |
+| Snapshot payload | Region内durability。初期cross-region保証なし | Primary Region回復待ち可 |
+
+この値は社内BCP基準がより厳しい場合はそちらを優先する。
+
+### 23.6 DR Test
+
+少なくとも半年ごとに以下を実施する。
+
+- Control Plane restore rehearsal
+- DB restore
+- DNS切替手順
+- ECR/artifact取得
+- Worker再構築
+- Incident communication
+
+Virtual DR教材のFault Injection試験とは別物として扱う。
+
+## 24. Capacity / Cost設計
+
+### 24.1 Standard Runtime Profile
+
+初期Profile:
+
+| Profile | vCPU | Memory | Ephemeral | 用途 |
+| --- | ---: | ---: | ---: | --- |
+| S1 | 0.5 | 1 GiB | 20 GiB | 軽量検証 |
+| S2 | 1 | 2 GiB | 20 GiB | default |
+| S4 | 2 | 4 GiB | 30 GiB | 重いStandard service |
+
+defaultはS2とする。
+
+Phase 0でMiniStack P0/P1 serviceを組み合わせたbenchmarkを実施し、OOM/CPU saturationが多い場合はdefaultを調整する。
+
+利用中Taskを自動vertical resizeせず、必要なProfile変更はSnapshot/Resume境界で行う。
+
+### 24.2 User Quota初期値
+
+初期値:
+
+- active Workspace / User: 1
+- Advanced max ACU / User: 4
+- Snapshot count / Workspace: 3
+- Snapshot retention default: 7日
+- Snapshot retention maximum: 30日
+- Idle auto-Suspend: 30分
+- Runtime hard TTL: 8時間
+
+これらはConfiguration as Codeで変更可能とし、Pilot実績で調整する。
+
+### 24.3 Advanced Fleet
+
+既定ACU/scale thresholdは4.4節を正とする。
+
+Fleet PlannerはWorker instance typeごとの時間単価を設定データとして保持する。
+
+料金情報更新時にコード変更を不要とし、定期更新または管理者更新で再計算可能にする。
+
+### 24.4 Hard Cost Guardrail
+
+Budget / Cost Anomaly Detectionは通知用途とし、Hard Guardrailには使用しない。
+
+Hard Guardrail:
+
+- maxWorkers
+- maxTotalACU
+- maxACUPerUser
+- maxActiveStandardLabs
+- runtime TTL
+- snapshot quota
+- maxEstimatedWorkerHourlyCost
+
+Scale Outによって `maxEstimatedWorkerHourlyCost` を超える場合、Schedulerは新規Advanced allocationを待機/拒否しOperatorへ通知する。
+
+### 24.5 Internal Cost Attribution
+
+AWS請求と利用者Labのshowbackを分離する。
+
+Standard:
+
+- Fargate vCPU-seconds
+- Memory GB-seconds
+- Runtime duration
+
+Advanced:
+
+- allocated ACU-seconds
+- profile
+- worker shared overhead
+
+Snapshot:
+
+- bytes × retention time
+
+利用者へ実請求することを意味せず、サービス運営のcapacity/cost分析用とする。
+
+### 24.6 Resource Tagging
+
+実AWS resourceへ最低限以下をtagする。
+
+- Project
+- Environment
+- Component
+- ManagedBy
+- WorkerClass
+- ReleaseVersion
+
+利用者入力をAWS Tagへ無制限に転記しない。
+
+## 25. Observability設計
+
+### 25.1 Telemetry分離
+
+以下を完全に分離する。
+
+1. Platform運用Telemetry
+2. Runtime/Worker運用Telemetry
+3. 利用者がLab内で作る「CloudWatch相当」データ
+
+3はMiniStack/Internal Emulator内部のLabデータであり、実CloudWatch Logsへそのまま転送しない。
+
+### 25.2 Logging
+
+Platform logはstructured JSONとする。
+
+共通field:
+
+- timestamp
+- level
+- component
+- correlationId
+- userId
+- workspaceId
+- sessionId
+- operationId
+- runtimeId
+- workerId
+- eventCode
+
+以下を記録しない。
+
+- Secret
+- Authorization header
+- Lab object body
+- DB record content
+- Lambda source全文
+
+### 25.3 Metrics
+
+Control Plane:
+
+- API request/error/latency
+- active Workspace/Session
+- operation queue depth/age
+- lifecycle success/failure
+- DB connection/latency
+
+Standard:
+
+- active Fargate Task
+- CPU/Memory
+- runtime start duration
+- crash count
+
+Advanced:
+
+- Worker count/class
+- total/free/allocated ACU
+- placement failure
+- Worker CPU/Memory/Disk
+- microVM count
+- heartbeat age
+- drain duration
+
+Snapshot:
+
+- create/restore/delete duration
+- bytes
+- checksum failure
+- purge failure
+
+Security:
+
+- auth deny
+- cross-workspace deny
+- egress deny
+- break-glass
+- unexpected real AWS API attempt
+
+### 25.4 Tracing
+
+BFF / Control Plane / Operation Worker / Runtime GatewayではOpenTelemetry互換trace contextを利用する。
+
+`X-Correlation-Id` とtrace IDを関連付ける。
+
+Traceに利用者Payloadをrecordしない。
+
+初期backendはAWS X-Ray / CloudWatch系を利用可能とする。
+
+### 25.5 Dashboards
+
+最低限以下を用意する。
+
+- Platform Health
+- Lab Lifecycle
+- Advanced Capacity / Cost
+- Snapshot
+- Security Guardrail
+- Provider Compatibility
+- DR/Fault Injection
+
+### 25.6 Alert
+
+Critical:
+
+- Control Plane unavailable
+- Aurora failover/error
+- cross-workspace access成功疑い
+- unexpected real AWS credential/API usage
+- Snapshot purge failure for incident case
+
+High:
+
+- Operation queue oldest age閾値超過
+- Advanced placement連続失敗
+- Worker heartbeat loss
+- Snapshot failure rate上昇
+- orphan runtime
+- cost hard limit接近
+
+### 25.7 Initial SLO / Performance Objective
+
+Pilot目標:
+
+| 指標 | 初期目標 |
+| --- | --- |
+| Control Plane availability | 99.5% / month |
+| BFF synchronous API p95 | 1秒以内（Provider処理除外） |
+| Standard Runtime start p95 | 60秒以内 |
+| Advanced Promotion p95 | 300秒以内 |
+| Snapshot 1 GiB Suspend/Resume p95 | 各180秒以内 |
+
+初期リリースでは外部SLAではなく改善用SLOとして扱う。
+
+## 26. CI/CD・Release設計
+
+### 26.1 Environment
+
+```text
+Local
+ ↓
+Staging
+ ↓
+Production
+```
+
+Production deployはmain branchの署名/承認済みcommitからのみ行う。
+
+### 26.2 GitHub Actions Authentication
+
+CI/CDからAWSへ長期Access Keyを保存しない。
+
+GitHub Actions OIDCでAWS IAM RoleをAssumeし、repository / branch / environment claimでTrust Policyを限定する。
+
+### 26.3 PR Gate
+
+必須:
+
+- lint
+- typecheck
+- unit test
+- API contract test
+- security/SAST
+- dependency vulnerability
+- secret scan
+- SBOM生成
+- license check
+- IaC validate/plan
+- MiniStack compatibility test for changed service
+- Snapshot compatibility test when state format changes
+
+### 26.4 Build Artifact
+
+以下をversion/digest固定する。
+
+- Web/BFF image
+- Control Plane Worker image
+- MiniStack image
+- Advanced Worker Agent
+- microVM rootfs
+- Advanced Worker AMI
+
+ECR imageはtagだけでなくdigestをrelease manifestへ記録する。
+
+Advanced Worker AMIはimmutable imageとしてbuildし、in-place手作業更新をしない。
+
+### 26.5 Deployment
+
+Web/BFF/WorkerはECS rolling deployment + deployment circuit breakerを初期方式とする。
+
+- minimum healthy taskを維持する
+- health check失敗時に自動rollback
+- DB migrationはdeploy前後互換を維持する
+
+Advanced WorkerはASG Instance Refreshを使用し、drain済みWorkerから順次交換する。
+
+Active LabをAMI更新だけの理由で強制終了しない。
+
+### 26.6 DB Migration
+
+Expand / Migrate / Contractを原則とする。
+
+1 release内で破壊的schema変更と旧code停止を同時に行わない。
+
+migration failure時はApplication releaseを進めない。
+
+### 26.7 MiniStack Upgrade Gate
+
+MiniStack更新は通常dependency updateと分離する。
+
+```text
+New engine
+ ↓
+P0/P1 service API regression
+ ↓
+Cross-service integration
+ ↓
+Old snapshot -> new engine restore
+ ↓
+Security regression
+ ↓
+Staging soak
+ ↓
+Production
+```
+
+既存Snapshotとの互換性がない場合は、自動upgradeせずmigration方針または旧engine restore期間を定義する。
+
+### 26.8 Rollback
+
+- Application: previous image digestへrollback
+- ECS: deployment circuit breaker
+- Advanced Worker: previous AMIへInstance Refresh
+- MiniStack: previous engine digest
+- DB:原則forward-fix。不可逆migrationを避ける
+
+### 26.9 Release Manifest
+
+各Production releaseについて以下を記録する。
+
+- git commit
+- image digest
+- MiniStack version/digest
+- AMI ID
+- rootfs version
+- schema version
+- Service Capability version
+- config version
+- SBOM reference
+- vulnerability scan result
+
+## 27. 段階リリース
 
 ### Phase 0: Technical Validation
 
@@ -2034,7 +2913,7 @@ WorkerまたはEC2ごと隔離・破棄できることを優先する。
 - CLI / IaC
 - Snapshot Clone / Template化
 
-## 20. 初期ディレクトリ構成案
+## 28. 初期ディレクトリ構成案
 
 ```text
 aws-internal-lab/
@@ -2071,18 +2950,13 @@ aws-internal-lab/
 
 実装時の具体的な言語・Framework・IaCツールは実装計画作成時に確定する。
 
-## 21. 未決事項
+## 29. 未決事項
 
 本基本設計時点で、以下は後続の技術検証または社内基準確認で確定する。
 
 - 社内IdP製品固有のOIDC endpoint / claim mapping / ALB OIDC互換性
-- AWSアカウント/VPC配置先
 - Aurora Serverless v2 / provisioned等の選択
 - ECS/Fargateの具体的CPU/Memory値
-- Lab TTL / Idle timeout初期値
-- Idle timeout時に自動Suspendするか自動破棄するか
-- Snapshot retention初期値
-- User単位Snapshot数 / 容量Quota
 - Snapshot archive形式・圧縮方式
 - Snapshot Bucket Versioningの有無
 - Snapshot transferをControl Plane側/sidecar側のどちらで行うか
@@ -2094,11 +2968,11 @@ aws-internal-lab/
 - AWS Management ConsoleのUI差分確認・更新頻度
 - AWSブランド資産・スクリーンショット等の最終的な利用範囲
 - UI実装Framework
-- IaCツール
+- IaC実装ツールの最終選定
 
 これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。ただしAWS Management Consoleの実操作を学べること、Standard LabのSuspend/Resume、LabWorkspace/Virtual Account/Region/ARNの継続性、Operation単位Provider Routing、RBAC、API Idempotencyを提供すること自体は未決事項ではなく、本システムの前提要件とする。
 
-## 22. 参考
+## 30. 参考
 
 - MiniStack: https://ministack.org/
 - MiniStack GitHub: https://github.com/ministackorg/ministack
@@ -2113,9 +2987,9 @@ aws-internal-lab/
 - Advanced Worker ADR: `adr/0001-shared-advanced-worker-pool.md`
 - Virtual AWS Workspace / Provider Routing ADR: `adr/0002-virtual-aws-workspace-and-provider-routing.md`
 
-## 23. 知財・ブランド設計
+## 31. 知財・ブランド設計
 
-### 23.1 設計境界
+### 31.1 設計境界
 
 本サービスでは、AWS Management Consoleの「機能・情報構造・操作順序」と「AWSの視覚・ブランド表現」を別レイヤーとして扱う。
 
@@ -2139,7 +3013,7 @@ aws-internal-lab/
 - AWS Consoleから抽出した画像/SVG/sprite等
 - AWSの説明文・ヘルプ文章等の長文著作物
 
-### 23.2 誤認防止
+### 31.2 誤認防止
 
 共通Header等に、少なくとも以下の趣旨を常時表示する。
 
@@ -2149,7 +3023,7 @@ AWS Management Consoleの操作学習を目的とした社内環境です。
 AWSが提供・承認・運営するサービスではありません。
 ```
 
-### 23.3 スクリーンショット
+### 31.3 スクリーンショット
 
 AWS Consoleのスクリーンショットは、現行画面との差分確認・社内設計レビューに必要な最小限の範囲でのみ使用する。
 
@@ -2158,7 +3032,7 @@ AWS Consoleのスクリーンショットは、現行画面との差分確認・
 - アカウントID、ARN、メールアドレス等の社内/顧客情報を含めない。
 - 社外利用が必要となった場合は再レビューする。
 
-### 23.4 UIレビューゲート
+### 31.4 UIレビューゲート
 
 サービスUIのレビューでは、機能再現に加えて以下をチェックする。
 
