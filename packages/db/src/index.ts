@@ -5,3 +5,5 @@ export * from "./workspace-repository.js";
 export * from "./lifecycle-repository.js";
 
 export * from "./runtime-repository.js";
+
+export * from "./snapshot-repository.js";
