@@ -24,7 +24,7 @@ export class PlatformOperationsStack extends Stack {
       contentBasedDeduplication: false,
       encryption: sqs.QueueEncryption.SQS_MANAGED,
       receiveMessageWaitTime: Duration.seconds(20),
-      visibilityTimeout: Duration.minutes(5),
+      visibilityTimeout: Duration.minutes(15),
       retentionPeriod: Duration.days(4),
       deadLetterQueue: {
         queue: deadLetterQueue,
