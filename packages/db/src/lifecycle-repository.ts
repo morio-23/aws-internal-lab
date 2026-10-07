@@ -272,3 +272,21 @@ export async function findStaleOperations(input: {
     await sql.end();
   }
 }
+
+export async function getLifecycleOperation(input: {
+  databaseUrl: string;
+  operationId: string;
+}): Promise<LabOperationRecord | null> {
+  const sql = postgres(input.databaseUrl, { max: 1 });
+  try {
+    const rows = await sql<OperationRow[]>`
+      SELECT *
+      FROM lab_operation
+      WHERE id = ${input.operationId}
+      LIMIT 1
+    `;
+    return rows[0] ? mapOperation(rows[0]) : null;
+  } finally {
+    await sql.end();
+  }
+}
