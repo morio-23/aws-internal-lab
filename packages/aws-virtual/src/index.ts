@@ -1,3 +1,5 @@
+export const packageName = "@aws-internal-lab/aws-virtual";
+
 import { randomInt } from "node:crypto";
 
 export const SUPPORTED_VIRTUAL_REGIONS = [
