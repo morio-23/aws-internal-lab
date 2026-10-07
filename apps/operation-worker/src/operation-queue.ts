@@ -57,7 +57,7 @@ export class SqsOperationQueue implements OperationQueue, OperationInbox {
       QueueUrl: this.#queueUrl,
       MaxNumberOfMessages: 1,
       WaitTimeSeconds: 1,
-      VisibilityTimeout: 900,
+      VisibilityTimeout: 1800,
     })) as { Messages?: Array<{ Body?: string; ReceiptHandle?: string }> };
     return (result.Messages ?? []).map((message) => {
       if (!message.Body || !message.ReceiptHandle) throw new Error("INVALID_OPERATION_QUEUE_MESSAGE");
