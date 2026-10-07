@@ -11,7 +11,7 @@
     "boundaries": "node scripts/check-boundaries.mjs",
     "dev:control-plane": "tsx apps/control-plane/src/server.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "test:integration:db": "node --import tsx --test tests/integration/db.test.ts",
+    "test:integration:db": "node --import tsx --test tests/integration/db.test.ts tests/integration/workspace.test.ts",
     "build:web": "pnpm --filter @aws-internal-lab/web build"
   },
   "devDependencies": {
