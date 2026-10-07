@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
 
-process.env.NODE_ENV = "test";
-
 const { server } = await import("../../apps/control-plane/src/server.js");
 
 test("control plane rejects unauthenticated requests and resolves prototype identity", async () => {
