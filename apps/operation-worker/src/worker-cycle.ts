@@ -40,6 +40,7 @@ export async function runStandardWorkerCycle(input: {
   failed: number;
   orphanTasksStopped: number;
   orphanVolumesDeleted: number;
+  orphanSnapshotsDeleted: number;
 }> {
   const outbox = await relayOutboxOnce({ databaseUrl: input.databaseUrl, queue: input.queue });
   const operations = await processOperationMessages({
@@ -64,5 +65,6 @@ export async function runStandardWorkerCycle(input: {
     failed: outbox.failed + operations.failed,
     orphanTasksStopped: reconciliation.orphanTasksStopped,
     orphanVolumesDeleted: reconciliation.orphanVolumesDeleted,
+    orphanSnapshotsDeleted: reconciliation.orphanSnapshotsDeleted,
   };
 }
