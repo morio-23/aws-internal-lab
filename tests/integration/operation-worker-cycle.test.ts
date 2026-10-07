@@ -50,6 +50,7 @@ test("outbox and worker cycle provision then stop the API-created runtime", asyn
   };
   const gatewayAdmin = {
     async quiesce() {},
+    async persist() {},
     async unquiesce() {},
   };
   const cycle = () => runStandardWorkerCycle({
