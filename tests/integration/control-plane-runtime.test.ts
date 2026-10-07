@@ -32,6 +32,7 @@ class ApiFakeProvisioner implements StandardRuntimeProvisioner {
       state: this.stopped ? "stopped" : "running",
       taskArn,
       privateIpv4Address: "10.30.2.30",
+      stateVolumeId: "vol-api-runtime",
     };
   }
 }
