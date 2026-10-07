@@ -32,7 +32,13 @@ export async function runStandardWorkerCycle(input: {
   provisioner: StandardRuntimeProvisioner;
   snapshotManager: StandardSnapshotManager;
   manifestStore: SnapshotManifestStore;
-}): Promise<{ published: number; processed: number; failed: number; orphanTasksStopped: number }> {
+}): Promise<{
+  published: number;
+  processed: number;
+  failed: number;
+  orphanTasksStopped: number;
+  orphanVolumesDeleted: number;
+}> {
   const outbox = await relayOutboxOnce({ databaseUrl: input.databaseUrl, queue: input.queue });
   const operations = await processOperationMessages({
     inbox: input.queue,
@@ -47,11 +53,13 @@ export async function runStandardWorkerCycle(input: {
   const reconciliation = await reconcileStandardRuntimes({
     databaseUrl: input.databaseUrl,
     provisioner: input.provisioner,
+    snapshotManager: input.snapshotManager,
   });
   return {
     published: outbox.published,
     processed: operations.processed,
     failed: outbox.failed + operations.failed,
     orphanTasksStopped: reconciliation.orphanTasksStopped,
+    orphanVolumesDeleted: reconciliation.orphanVolumesDeleted,
   };
 }
