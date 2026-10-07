@@ -102,6 +102,16 @@ export class RuntimeStack extends Stack {
         "Intentionally empty task role for learner-controlled Standard Runtime",
     });
 
+    const ebsInfrastructureRole = new iam.Role(this, "EcsEbsInfrastructureRole", {
+      assumedBy: new iam.ServicePrincipal("ecs.amazonaws.com"),
+      description: "Allows ECS to manage per-task encrypted EBS volumes",
+    });
+    ebsInfrastructureRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName(
+        "service-role/AmazonECSInfrastructureRolePolicyForVolumes",
+      ),
+    );
+
     const taskDefinition = new ecs.FargateTaskDefinition(this, "StandardTaskDefinition", {
       cpu: 1024,
       memoryLimitMiB: 2048,
@@ -112,7 +122,10 @@ export class RuntimeStack extends Stack {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
       },
     });
-    taskDefinition.addVolume({ name: "lab-state" });
+    taskDefinition.addVolume({
+      name: "lab-state",
+      configuredAtLaunch: true,
+    });
 
     const ministack = taskDefinition.addContainer("MiniStack", {
       containerName: "ministack",
@@ -186,6 +199,12 @@ export class RuntimeStack extends Stack {
     taskDefinition.grantRun(orchestratorRole);
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
+        actions: ["iam:PassRole"],
+        resources: [ebsInfrastructureRole.roleArn],
+      }),
+    );
+    orchestratorRole.addToPolicy(
+      new iam.PolicyStatement({
         actions: ["ecs:StopTask", "ecs:DescribeTasks"],
         resources: ["*"],
       }),
@@ -198,6 +217,9 @@ export class RuntimeStack extends Stack {
     });
     new CfnOutput(this, "StandardTaskDefinitionArn", {
       value: taskDefinition.taskDefinitionArn,
+    });
+    new CfnOutput(this, "EcsEbsInfrastructureRoleArn", {
+      value: ebsInfrastructureRole.roleArn,
     });
     new CfnOutput(this, "StandardTaskSecurityGroupId", {
       value: taskSecurityGroup.securityGroupId,
