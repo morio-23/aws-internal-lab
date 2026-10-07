@@ -28,6 +28,12 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
     SourceSecurityGroupId: { Ref: "PlatformBffSecurityGroupId" },
     SourceSecurityGroupOwnerId: { Ref: "PlatformAccountId" },
   });
+  template.hasResourceProperties("AWS::EC2::SecurityGroupEgress", {
+    IpProtocol: "tcp",
+    FromPort: 443,
+    ToPort: 443,
+    DestinationPrefixListId: { Ref: "S3ManagedPrefixListId" },
+  });
 
   template.hasResourceProperties("AWS::ECS::TaskDefinition", {
     Cpu: "1024",
@@ -96,6 +102,25 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
       (resource as { Type?: string }).Type === "AWS::EC2::InternetGateway",
   );
   assert.equal(internetGateways.length, 0);
+
+  const taskSecurityGroup = Object.values(json.Resources).find(
+    (resource) =>
+      (resource as { Type?: string; Properties?: { GroupDescription?: string } }).Type ===
+        "AWS::EC2::SecurityGroup" &&
+      (resource as { Properties?: { GroupDescription?: string } }).Properties
+        ?.GroupDescription === "Standard Lab Fargate task security group",
+  ) as {
+    Properties: {
+      SecurityGroupEgress?: Array<{ CidrIp?: string; IpProtocol?: string }>;
+    };
+  };
+  assert.ok(taskSecurityGroup);
+  assert.equal(
+    taskSecurityGroup.Properties.SecurityGroupEgress?.some(
+      (rule) => rule.CidrIp === "0.0.0.0/0",
+    ) ?? false,
+    false,
+  );
 
   const endpoints = Object.values(json.Resources)
     .filter((resource) => (resource as { Type?: string }).Type === "AWS::EC2::VPCEndpoint")
