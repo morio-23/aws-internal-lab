@@ -224,6 +224,16 @@ Standard LabでAdvanced必須操作が要求された場合は、Lab状態をSna
 
 Worker PoolはAdvanced Capacity Unit (ACU)で容量管理し、需要に応じてWorkerのサイズ・台数を自動調整する。少数利用時はWorkerを0台まで縮退し、利用量増加時のみscale outする。
 
+### 10.3 LabWorkspace / 仮想AWS環境
+
+利用者が継続利用する論理AWS環境はLabWorkspaceとして管理する。
+
+WorkspaceにはLab専用のVirtual AWS Account IDとVirtual Regionを割り当て、Suspend / ResumeやStandard / Advanced Runtime切替後もARN namespaceを維持する。
+
+AWSサービスへのrequestはLab Gatewayを単一入口とし、Operation単位でMiniStack / Internal Emulator / Deny等へProvider Routingする。MiniStack未対応サービスも同じWorkspace/Account/Region体系の中へ段階的に追加できる構造とする。
+
+Lab内コードには実AWS Credentialを渡さず、Lab専用CredentialとLab Gateway endpointを使用する。Runtimeから実AWS public endpointへの任意egressは禁止し、誤操作による実AWS到達を防止する。
+
 ## 11. セキュリティ基本方針
 
 ### 11.1 データ取扱い
