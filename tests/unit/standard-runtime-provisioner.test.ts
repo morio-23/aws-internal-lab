@@ -64,6 +64,16 @@ test("Fargate provisioner launches a private task bound to workspace identity", 
         terminationPolicy: {
           deleteOnTermination: false,
         },
+        tagSpecifications: [
+          {
+            resourceType: "volume",
+            tags: [
+              { key: "ManagedBy", value: "aws-internal-lab" },
+              { key: "WorkspaceId", value: "workspace-1" },
+              { key: "SessionId", value: "session-1" },
+            ],
+          },
+        ],
         sizeInGiB: 8,
       },
     },
