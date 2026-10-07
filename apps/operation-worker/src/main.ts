@@ -13,6 +13,7 @@ import {
   S3SnapshotManifestStore,
 } from "../../../packages/runtime-control/src/snapshot-manifest.js";
 import { SqsOperationQueue } from "./operation-queue.js";
+import { HttpRuntimeGatewayAdmin } from "./runtime-gateway-admin.js";
 import { runStandardWorkerCycle } from "./worker-cycle.js";
 
 function required(name: string): string {
@@ -33,6 +34,11 @@ function csv(name: string): string[] {
 export function createStandardRuntimeDependenciesFromEnvironment() {
   const region = process.env.AWS_REGION ?? "ap-northeast-1";
 
+  const platformPrivateKeyPem = Buffer.from(
+    required("PLATFORM_RUNTIME_PRIVATE_KEY_B64"),
+    "base64",
+  ).toString("utf8");
+
   return {
     provisioner: new EcsStandardRuntimeProvisioner({
       clusterArn: required("STANDARD_CLUSTER_ARN"),
@@ -52,6 +58,9 @@ export function createStandardRuntimeDependenciesFromEnvironment() {
     manifestStore: new S3SnapshotManifestStore({
       bucket: required("SNAPSHOT_BUCKET_NAME"),
       client: new S3Client({ region }),
+    }),
+    gatewayAdmin: new HttpRuntimeGatewayAdmin({
+      privateKeyPem: platformPrivateKeyPem,
     }),
   };
 }
