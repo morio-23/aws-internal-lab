@@ -3,6 +3,7 @@ import type { StandardSnapshotManager } from "../../../packages/runtime-control/
 import type { StandardRuntimeProvisioner } from "../../../packages/runtime-control/src/standard-runtime.js";
 import { relayOutboxOnce, type OperationQueue } from "./outbox-relay.js";
 import type { OperationInbox } from "./operation-queue.js";
+import type { RuntimeGatewayAdmin } from "./runtime-gateway-admin.js";
 import { executeStandardRuntimeOperation, reconcileStandardRuntimes } from "./standard-runtime-handler.js";
 
 export async function processOperationMessages(input: {
@@ -32,6 +33,7 @@ export async function runStandardWorkerCycle(input: {
   provisioner: StandardRuntimeProvisioner;
   snapshotManager: StandardSnapshotManager;
   manifestStore: SnapshotManifestStore;
+  gatewayAdmin: RuntimeGatewayAdmin;
 }): Promise<{
   published: number;
   processed: number;
@@ -48,6 +50,7 @@ export async function runStandardWorkerCycle(input: {
       provisioner: input.provisioner,
       snapshotManager: input.snapshotManager,
       manifestStore: input.manifestStore,
+      gatewayAdmin: input.gatewayAdmin,
     }),
   });
   const reconciliation = await reconcileStandardRuntimes({
