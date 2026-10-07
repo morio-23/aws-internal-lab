@@ -11,7 +11,7 @@
     "boundaries": "node scripts/check-boundaries.mjs",
     "dev:control-plane": "tsx apps/control-plane/src/server.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "test:integration:db": "node --import tsx --test tests/integration/db.test.ts tests/integration/workspace.test.ts tests/integration/lifecycle.test.ts tests/integration/runtime.test.ts tests/integration/standard-runtime-operation.test.ts tests/integration/control-plane-runtime.test.ts tests/integration/ministack-services.test.ts tests/integration/service-proxy.test.ts tests/integration/snapshot-db.test.ts",
+    "test:integration:db": "node --import tsx --test tests/integration/db.test.ts tests/integration/workspace.test.ts tests/integration/lifecycle.test.ts tests/integration/runtime.test.ts tests/integration/standard-runtime-operation.test.ts tests/integration/control-plane-runtime.test.ts tests/integration/ministack-services.test.ts tests/integration/service-proxy.test.ts tests/integration/snapshot-db.test.ts tests/integration/snapshot-lifecycle.test.ts",
     "build:web": "pnpm --filter @aws-internal-lab/web build",
     "cdk:synth": "tsx infra/cdk/bin/app.ts",
     "typecheck:infra": "tsc -p infra/cdk/tsconfig.json"
