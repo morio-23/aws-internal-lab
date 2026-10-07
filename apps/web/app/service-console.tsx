@@ -80,8 +80,7 @@ export function ServiceConsole() {
     [serviceCode],
   );
 
-  const controlPlaneUrl =
-    process.env.NEXT_PUBLIC_CONTROL_PLANE_URL ?? "http://localhost:3001";
+  const controlPlaneUrl = "/platform-api";
   const prototypeUser =
     process.env.NEXT_PUBLIC_PROTOTYPE_USER ?? "prototype-learner";
 
