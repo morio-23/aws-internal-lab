@@ -377,11 +377,17 @@ Snapshotは機密情報等が混入し得るUntrusted User Dataとして扱い�
 serviceCode: s3
 displayName: Amazon S3
 targetLevel: L2
+implementedLevel: null
+scope: regional
 runtimeType: standard
 runtimeRequirement: standard
 capacityProfile: null
 capacityUnits: 0
 provider: ministack
+providerRoutes:
+  - operation: "*"
+    provider: ministack
+integrationOwner: ministack
 ministackCurrent: true
 snapshotSupport: full
 priority: P0
@@ -390,7 +396,7 @@ consoleVerifiedAt: null
 knownLimitations: []
 ```
 
-実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を追加し、**TargetとCurrent implementationを分離**する。Advanced対応サービスでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` をOperation単位で管理し、Worker Fleet PlannerのACU計算に利用する。
+実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を管理し、**TargetとCurrent implementationを分離**する。`scope` で global / regional を管理し、`providerRoutes` はOperation単位で MiniStack / Internal / Reference / Deny を指定する。Advanced対応Operationでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` を管理し、Worker Fleet PlannerのACU計算に利用する。Cross-provider連携では `integrationOwner` を持ち、MiniStack native integrationとIntegration Bridgeの二重実行を防ぐ。
 
 ## 11. 更新ルール
 
