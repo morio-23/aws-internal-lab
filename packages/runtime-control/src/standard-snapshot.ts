@@ -3,12 +3,18 @@ import {
   DeleteSnapshotCommand,
   DeleteVolumeCommand,
   DescribeSnapshotsCommand,
+  DescribeVolumesCommand,
   EC2Client,
   type EC2ClientConfig,
 } from "@aws-sdk/client-ec2";
 
 export type StandardSnapshotCreateResult = {
   snapshotId: string;
+};
+
+export type ManagedStandardVolume = {
+  volumeId: string;
+  createTime: Date;
 };
 
 export interface StandardSnapshotManager {
@@ -19,6 +25,7 @@ export interface StandardSnapshotManager {
   }): Promise<StandardSnapshotCreateResult>;
   deleteVolume(volumeId: string): Promise<void>;
   deleteSnapshot(snapshotId: string): Promise<void>;
+  listManagedVolumes(): Promise<ManagedStandardVolume[]>;
 }
 
 type Ec2Sender = {
@@ -26,6 +33,7 @@ type Ec2Sender = {
     command:
       | CreateSnapshotCommand
       | DescribeSnapshotsCommand
+      | DescribeVolumesCommand
       | DeleteVolumeCommand
       | DeleteSnapshotCommand,
   ): Promise<unknown>;
@@ -109,5 +117,36 @@ export class AwsStandardSnapshotManager implements StandardSnapshotManager {
     await this.#client.send(
       new DeleteSnapshotCommand({ SnapshotId: snapshotId }),
     );
+  }
+
+  async listManagedVolumes(): Promise<ManagedStandardVolume[]> {
+    const volumes: ManagedStandardVolume[] = [];
+    let nextToken: string | undefined;
+
+    do {
+      const result = (await this.#client.send(
+        new DescribeVolumesCommand({
+          Filters: [
+            { Name: "tag:ManagedBy", Values: ["aws-internal-lab"] },
+            { Name: "status", Values: ["available"] },
+          ],
+          ...(nextToken ? { NextToken: nextToken } : {}),
+        }),
+      )) as {
+        Volumes?: Array<{ VolumeId?: string; CreateTime?: Date }>;
+        NextToken?: string;
+      };
+
+      for (const volume of result.Volumes ?? []) {
+        if (!volume.VolumeId || !volume.CreateTime) continue;
+        volumes.push({
+          volumeId: volume.VolumeId,
+          createTime: volume.CreateTime,
+        });
+      }
+      nextToken = result.NextToken;
+    } while (nextToken);
+
+    return volumes;
   }
 }
