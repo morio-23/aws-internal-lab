@@ -961,18 +961,18 @@ Snapshot payload 本体は Aurora に保存しない。
 
 
 24. WorkspaceのVirtual Account ID / Region / ARN namespaceがSuspend/ResumeおよびStandard/Advanced切替後も維持される。
-24a. 東京 `ap-northeast-1` と大阪 `ap-northeast-3` に同一WorkspaceのRegional resourceを作成でき、東京障害を模擬した状態で大阪側へfailoverするDR演習が他利用者へ影響せず実施できる。
-25. Lab内SDKへ実AWS Credentialを渡さず、実AWS public endpointへ誤送信できないことを確認できる。
-26. Operation単位のProvider RoutingでMiniStack / Internal / Denyを切り替えられる。
-27. 同じIdempotency KeyによるLifecycle API再送で二重Runtime/Snapshotを作成しない。
-28. Learner / Operator / Administrator / SecurityAuditorの権限分離とowner checkが確認できる。
-29. Correlation IDにより利用者操作からProvider/Auditまで追跡でき、Payload本文は記録されない。
-30. Control Planeの単一Task/AZ障害でサービス全体が停止しない構成が確認できる。
-31. Lifecycle Operation失敗時にpartial Runtime/Allocationをcleanupし、元Snapshotを破壊しない。
-32. Reconcilerがorphan Runtime / stale Worker Allocation / Snapshot不整合を検出できる。
-33. Platform/Runtime Telemetryと利用者Lab内CloudWatch相当データが分離される。
-34. Production release artifactのcommit、image digest、MiniStack version、schema version、SBOMを追跡できる。
-35. Virtual DR演習とPlatform自身のPhysical DRがUI/運用上区別される。
+25. 東京 `ap-northeast-1` と大阪 `ap-northeast-3` に同一WorkspaceのRegional resourceを作成でき、東京障害を模擬した状態で大阪側へfailoverするDR演習が他利用者へ影響せず実施できる。
+26. Lab内SDKへ実AWS Credentialを渡さず、実AWS public endpointへ誤送信できないことを確認できる。
+27. Operation単位のProvider RoutingでMiniStack / Internal / Denyを切り替えられる。
+28. 同じIdempotency KeyによるLifecycle API再送で二重Runtime/Snapshotを作成しない。
+29. Learner / Operator / Administrator / SecurityAuditorの権限分離とowner checkが確認できる。
+30. Correlation IDにより利用者操作からProvider/Auditまで追跡でき、Payload本文は記録されない。
+31. Control Planeの単一Task/AZ障害でサービス全体が停止しない構成が確認できる。
+32. Lifecycle Operation失敗時にpartial Runtime/Allocationをcleanupし、元Snapshotを破壊しない。
+33. Reconcilerがorphan Runtime / stale Worker Allocation / Snapshot不整合を検出できる。
+34. Platform/Runtime Telemetryと利用者Lab内CloudWatch相当データが分離される。
+35. Production release artifactのcommit、image digest、MiniStack version、schema version、SBOMを追跡できる。
+36. Virtual DR演習とPlatform自身のPhysical DRがUI/運用上区別される。
 
 ## 12. 後続要件候補
 
