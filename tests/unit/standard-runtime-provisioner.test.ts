@@ -96,8 +96,16 @@ test("Fargate provisioner stops and inspects tasks", async () => {
               desiredStatus: "RUNNING",
               attachments: [
                 {
+                  type: "ElasticNetworkInterface",
                   details: [
                     { name: "privateIPv4Address", value: "10.30.1.20" },
+                  ],
+                },
+                {
+                  type: "AmazonElasticBlockStorage",
+                  details: [
+                    { name: "volumeId", value: "vol-123" },
+                    { name: "volumeName", value: "lab-state" },
                   ],
                 },
               ],
@@ -122,6 +130,7 @@ test("Fargate provisioner stops and inspects tasks", async () => {
     state: "running",
     taskArn: "task-1",
     privateIpv4Address: "10.30.1.20",
+    stateVolumeId: "vol-123",
   });
 
   await provisioner.stop("task-1", "prototype stop");
