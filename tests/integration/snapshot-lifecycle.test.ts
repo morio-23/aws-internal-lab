@@ -58,11 +58,14 @@ class SnapshotFakeProvisioner implements StandardRuntimeProvisioner {
       };
     }
 
+    if (!this.currentVolumeId) {
+      throw new Error("fake runtime volume is missing");
+    }
     return {
       state: "running",
       taskArn,
       privateIpv4Address: "10.30.10." + (20 + this.generation),
-      stateVolumeId: this.currentVolumeId ?? undefined,
+      stateVolumeId: this.currentVolumeId,
     };
   }
 }
