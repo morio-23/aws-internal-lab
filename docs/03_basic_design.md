@@ -1425,17 +1425,20 @@ Snapshot Bucket は利用者データを含み得るため、Platform asset Buck
 - VPC Endpoint 経由を優先
 - CloudTrail data event の有効化を検討
 
-保存構造例:
+Standard Runtimeでは、実state payloadをECS managed EBS Snapshotへ保存し、S3 Snapshot Storeにはmanifestを保存する。
 
 ```text
-s3://<snapshot-bucket>/
+EBS Snapshot
+  snap-...       # /lab-state のblock payload
+
+S3 Snapshot Store
   snapshots/
-    <user-id>/
+    <workspace-id>/
       <snapshot-id>/
         manifest.json
-        state.tar.zst
-        s3-data.tar.zst
 ```
+
+Advanced RuntimeではmicroVM/service特性に応じたexport payloadをS3等へ保存する。StandardとAdvancedでpayload形式は異なるが、`LabSnapshot` metadataとmanifest schemaは共通化する。
 
 manifestには以下を含める。
 
@@ -2287,17 +2290,32 @@ Running process memory、open TCP session、in-flight Lambda invocation等は保
 
 ### 21.6 Snapshot Format
 
-初期論理形式:
+共通manifestは非圧縮JSONとする。
+
+Standard Runtime:
 
 ```text
 manifest.json
-engine-state/
+payloadType = ebs-snapshot
+providerSnapshotRef = snap-...
+```
+
+Standardの `/lab-state` はlaunch-time ECS managed EBSへ配置し、MiniStack graceful shutdown後にEBS Snapshotを作成する。source EBS volumeはSnapshot完成・manifest publish後に削除する。
+
+ResumeではEBS Snapshot IDをECS `RunTask.volumeConfigurations` へ指定し、新しいvolumeを作成して `/lab-state` へmountする。
+
+Advanced Runtime:
+
+```text
+manifest.json
 service-data/
 internal-state/
 advanced-data/
 ```
 
-Archive/圧縮形式は実測で決定するが、manifest自体は非圧縮JSONとして先頭検証可能にする。
+Advanced側のarchive/圧縮形式は実測で決定する。
+
+詳細は `adr/0004-standard-runtime-ebs-snapshot.md` を正とする。
 
 ## 22. データ論理設計
 
@@ -2957,9 +2975,8 @@ aws-internal-lab/
 
 - 社内IdP製品固有のOIDC endpoint / claim mapping / ALB OIDC互換性
 - Aurora Serverless v2 / provisioned等の選択
-- Snapshot archive形式・圧縮方式
+- Advanced Snapshot archive形式・圧縮方式
 - Snapshot Bucket Versioningの有無
-- Snapshot transferをControl Plane側/sidecar側のどちらで行うか
 - Advanced Workerのinstance family/size、1 HostあたりmicroVM密度、Resource Profile初期値
 - Advanced serviceごとのSnapshot整合性level / export手順
 - Audit保存期間
@@ -2987,6 +3004,7 @@ aws-internal-lab/
 - Advanced Worker ADR: `adr/0001-shared-advanced-worker-pool.md`
 - Virtual AWS Workspace / Provider Routing ADR: `adr/0002-virtual-aws-workspace-and-provider-routing.md`
 - Tokyo / Osaka Virtual Region DR ADR: `adr/0003-tokyo-osaka-virtual-regions-dr-learning.md`
+- Standard Runtime EBS Snapshot ADR: `adr/0004-standard-runtime-ebs-snapshot.md`
 - AWS Regions: https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html
 - AWS Well-Architected DR strategies: https://docs.aws.amazon.com/wellarchitected/latest/framework/rel_planning_for_recovery_disaster_recovery.html
 
