@@ -379,6 +379,11 @@ displayName: Amazon S3
 targetLevel: L2
 implementedLevel: null
 scope: regional
+supportedVirtualRegions:
+  - ap-northeast-1
+  - ap-northeast-3
+replicationSupport: none
+regionalFaultInjection: supported
 runtimeType: standard
 runtimeRequirement: standard
 capacityProfile: null
@@ -396,7 +401,7 @@ consoleVerifiedAt: null
 knownLimitations: []
 ```
 
-実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を管理し、**TargetとCurrent implementationを分離**する。`scope` で global / regional を管理し、`providerRoutes` はOperation単位で MiniStack / Internal / Reference / Deny を指定する。Advanced対応Operationでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` を管理し、Worker Fleet PlannerのACU計算に利用する。Cross-provider連携では `integrationOwner` を持ち、MiniStack native integrationとIntegration Bridgeの二重実行を防ぐ。
+実装開始後は `testedEngineVersion`、`consoleVerifiedAt`、`implementedLevel`、`enabled` を管理し、**TargetとCurrent implementationを分離**する。`scope` で global / regional を管理し、regional serviceは `supportedVirtualRegions` で東京 `ap-northeast-1` / 大阪 `ap-northeast-3` の対応を管理する。`replicationSupport` は none / configuration-only / asynchronous-data / synchronous-simulated を取り、`regionalFaultInjection` と合わせてDR教材可否を表す。`providerRoutes` はOperation単位で MiniStack / Internal / Reference / Deny を指定する。Advanced対応Operationでは `runtimeRequirement`、`capacityProfile`、`capacityUnits` を管理し、Worker Fleet PlannerのACU計算に利用する。Cross-provider連携では `integrationOwner` を持ち、MiniStack native integrationとIntegration Bridgeの二重実行を防ぐ。
 
 ## 11. 更新ルール
 
