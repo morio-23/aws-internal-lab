@@ -1033,13 +1033,16 @@ MiniStackのMIT Licenseの著作権表示・許諾表示を保持する。
 | --- | --- |
 | serviceCode | AWSサービス識別子 |
 | displayName | 表示名称 |
+| scope | global / regional |
 | enabled | 提供可否 |
 | maxLevel | L1/L2/L3 |
 | runtimeType | standard / advanced |
 | runtimeRequirement | Operation実行に必要なRuntime。standard / advanced |
 | capacityProfile | Advanced時のsmall / medium / large |
 | capacityUnits | Advanced Capacity Unit |
-| provider | ministack / internal / other |
+| provider | ministack / internal / reference / deny |
+| providerRoutes | Operation単位のProvider Route |
+| integrationOwner | ministack / internal bridge |
 | testedVersion | 検証済MiniStack version |
 | knownLimitations | 既知差異 |
 | dangerousFeatures | 無効化対象 |
