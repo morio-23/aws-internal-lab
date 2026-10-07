@@ -905,7 +905,7 @@ Corporate IdPのOIDCを使用する。
 - BrowserへIdP refresh tokenを直接保持させない。
 - Session CookieはSecure / HttpOnly / SameSiteを必須とする。
 - 認証HeaderをInternet側から直接BFFへ到達させない。
-- BFFはALB OIDC token/headerの署名・issuer・audience・expiryを検証する。
+- BFFは `x-amzn-oidc-data` の署名、`signer` が想定ALB ARNであること、`client`、`exp` 等を検証し、検証済みpayloadの `sub` を利用者識別子として使用する。署名されない `x-amzn-oidc-identity` / `x-amzn-oidc-accesstoken` を単独で認可根拠にしない。
 - Logout時はApplication sessionとIdP sessionの双方を考慮する。
 
 Corporate IdP要件によりALB OIDCを利用できない場合のみBFF OIDC implementationへ切り替える。
@@ -2003,7 +2003,7 @@ aws-internal-lab/
 
 本基本設計時点で、以下は後続の技術検証または社内基準確認で確定する。
 
-- 社内SSO製品とOIDC連携方式
+- 社内IdP製品固有のOIDC endpoint / claim mapping / ALB OIDC互換性
 - AWSアカウント/VPC配置先
 - Aurora Serverless v2 / provisioned等の選択
 - ECS/Fargateの具体的CPU/Memory値
@@ -2024,7 +2024,7 @@ aws-internal-lab/
 - UI実装Framework
 - IaCツール
 
-これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。ただしAWS Management Consoleの実操作を学べること、およびStandard LabのSuspend/Resumeを提供すること自体は未決事項ではなく、本システムの前提要件とする。
+これらは企画・要件の変更ではなく、詳細設計・技術検証で決定可能な項目として扱う。ただしAWS Management Consoleの実操作を学べること、Standard LabのSuspend/Resume、LabWorkspace/Virtual Account/Region/ARNの継続性、Operation単位Provider Routing、RBAC、API Idempotencyを提供すること自体は未決事項ではなく、本システムの前提要件とする。
 
 ## 22. 参考
 
@@ -2038,6 +2038,8 @@ aws-internal-lab/
 - AWS Site Terms: https://aws.amazon.com/terms/
 - AWS Architecture Icons: https://aws.amazon.com/architecture/icons/
 - AWS Internal Lab 知財・ブランド利用ガイドライン: `04_ip_guidelines.md`
+- Advanced Worker ADR: `adr/0001-shared-advanced-worker-pool.md`
+- Virtual AWS Workspace / Provider Routing ADR: `adr/0002-virtual-aws-workspace-and-provider-routing.md`
 
 ## 23. 知財・ブランド設計
 
