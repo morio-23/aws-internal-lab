@@ -9,6 +9,7 @@ export type RuntimeGatewayIdentity = {
 
 export interface RuntimeGatewayAdmin {
   quiesce(identity: RuntimeGatewayIdentity): Promise<void>;
+  persist(identity: RuntimeGatewayIdentity): Promise<void>;
   unquiesce(identity: RuntimeGatewayIdentity): Promise<void>;
 }
 
@@ -32,7 +33,7 @@ export class HttpRuntimeGatewayAdmin implements RuntimeGatewayAdmin {
   }
 
   async #post(
-    path: "/admin/quiesce" | "/admin/unquiesce",
+    path: "/admin/quiesce" | "/admin/persist" | "/admin/unquiesce",
     identity: RuntimeGatewayIdentity,
   ): Promise<void> {
     const token = signRuntimeToken({
@@ -59,6 +60,10 @@ export class HttpRuntimeGatewayAdmin implements RuntimeGatewayAdmin {
 
   async quiesce(identity: RuntimeGatewayIdentity): Promise<void> {
     await this.#post("/admin/quiesce", identity);
+  }
+
+  async persist(identity: RuntimeGatewayIdentity): Promise<void> {
+    await this.#post("/admin/persist", identity);
   }
 
   async unquiesce(identity: RuntimeGatewayIdentity): Promise<void> {
