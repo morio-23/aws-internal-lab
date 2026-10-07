@@ -96,7 +96,7 @@ export class EcsStandardRuntimeProvisioner
           },
         },
         startedBy: "aws-internal-lab-control-plane",
-        group: \`workspace:\${identity.workspaceId}\`,
+        group: `workspace:${identity.workspaceId}`,
         tags: [
           { key: "ManagedBy", value: "aws-internal-lab" },
           { key: "WorkspaceId", value: identity.workspaceId },
@@ -132,7 +132,7 @@ export class EcsStandardRuntimeProvisioner
     const failure = result.failures?.[0];
     if (failure) {
       throw new Error(
-        \`ECS_RUN_TASK_FAILED:\${failure.reason ?? failure.detail ?? "unknown"}\`,
+        `ECS_RUN_TASK_FAILED:${failure.reason ?? failure.detail ?? "unknown"}`,
       );
     }
 
