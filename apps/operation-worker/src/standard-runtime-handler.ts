@@ -3,6 +3,13 @@ import {
   setOperationStatus,
 } from "../../../packages/db/src/lifecycle-repository.js";
 import {
+  createStandardSnapshotRecord,
+  getAvailableSnapshotForWorkspace,
+  markSnapshotFailed,
+  markSnapshotRestored,
+  markStandardSnapshotAvailable,
+} from "../../../packages/db/src/snapshot-repository.js";
+import {
   createStartingStandardRuntime,
   finishStandardRuntime,
   getActiveRuntimeForWorkspace,
@@ -10,6 +17,12 @@ import {
   markRuntimeHeartbeat,
   markStandardRuntimeReady,
 } from "../../../packages/db/src/runtime-repository.js";
+import type {
+  SnapshotManifestStore,
+} from "../../../packages/runtime-control/src/snapshot-manifest.js";
+import type {
+  StandardSnapshotManager,
+} from "../../../packages/runtime-control/src/standard-snapshot.js";
 import type {
   StandardRuntimeProvisioner,
 } from "../../../packages/runtime-control/src/standard-runtime.js";
@@ -59,10 +72,96 @@ async function waitForRuntimeReady(input: {
   throw new Error("STANDARD_RUNTIME_READY_TIMEOUT");
 }
 
+async function waitForRuntimeStopped(input: {
+  provisioner: StandardRuntimeProvisioner;
+  taskArn: string;
+  attempts?: number;
+  intervalMs?: number;
+}): Promise<void> {
+  const attempts = input.attempts ?? 60;
+  const intervalMs = input.intervalMs ?? 2_000;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const inspection = await input.provisioner.inspect(input.taskArn);
+    if (inspection.state === "stopped") return;
+    if (inspection.state === "missing") {
+      throw new Error("STANDARD_RUNTIME_MISSING_DURING_STOP");
+    }
+    if (attempt + 1 < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  throw new Error("STANDARD_RUNTIME_STOP_TIMEOUT");
+}
+
+async function startStandardRuntime(input: {
+  databaseUrl: string;
+  workspaceId: string;
+  provisioner: StandardRuntimeProvisioner;
+  restoreSnapshotId?: string;
+}) {
+  const runtime = await createStartingStandardRuntime({
+    databaseUrl: input.databaseUrl,
+    workspaceId: input.workspaceId,
+  });
+  let taskArn: string | undefined;
+
+  try {
+    const started = await input.provisioner.start({
+      workspaceId: input.workspaceId,
+      sessionId: runtime.sessionId,
+      virtualAccountId: runtime.virtualAccountId,
+      enabledRegions: runtime.enabledRegions,
+      ...(input.restoreSnapshotId
+        ? { restoreSnapshotId: input.restoreSnapshotId }
+        : {}),
+    });
+    taskArn = started.taskArn;
+
+    const ready = await waitForRuntimeReady({
+      provisioner: input.provisioner,
+      taskArn,
+    });
+
+    await markStandardRuntimeReady({
+      databaseUrl: input.databaseUrl,
+      runtimeId: runtime.runtimeId,
+      providerRef: taskArn,
+      privateEndpoint: ready.privateIpv4Address + ":8080",
+      stateVolumeRef: ready.stateVolumeId,
+    });
+
+    return { runtime, taskArn };
+  } catch (error) {
+    if (taskArn) {
+      try {
+        await input.provisioner.stop(
+          taskArn,
+          "rollback failed Standard Runtime start",
+        );
+      } catch {
+        // Reconciler handles an orphan if cleanup cannot complete here.
+      }
+    }
+
+    await finishStandardRuntime({
+      databaseUrl: input.databaseUrl,
+      workspaceId: input.workspaceId,
+      runtimeId: runtime.runtimeId,
+      finalStatus: "failed",
+    });
+    throw error;
+  }
+}
+
 export async function executeStandardRuntimeOperation(input: {
   databaseUrl: string;
   operationId: string;
   provisioner: StandardRuntimeProvisioner;
+  snapshotManager?: StandardSnapshotManager;
+  manifestStore?: SnapshotManifestStore;
+  now?: () => Date;
 }): Promise<void> {
   const operation = await getLifecycleOperation({
     databaseUrl: input.databaseUrl,
@@ -86,39 +185,12 @@ export async function executeStandardRuntimeOperation(input: {
   });
 
   if (operation.operationType === "start") {
-    let runtime:
-      | Awaited<ReturnType<typeof createStartingStandardRuntime>>
-      | undefined;
-    let taskArn: string | undefined;
-
     try {
-      runtime = await createStartingStandardRuntime({
+      await startStandardRuntime({
         databaseUrl: input.databaseUrl,
         workspaceId: operation.workspaceId,
-      });
-
-      const started = await input.provisioner.start({
-        workspaceId: operation.workspaceId,
-        sessionId: runtime.sessionId,
-        virtualAccountId: runtime.virtualAccountId,
-        enabledRegions: runtime.enabledRegions,
-      });
-      taskArn = started.taskArn;
-
-      const ready = await waitForRuntimeReady({
         provisioner: input.provisioner,
-        taskArn,
       });
-      const privateEndpoint = ready.privateIpv4Address + ":8080";
-
-      await markStandardRuntimeReady({
-        databaseUrl: input.databaseUrl,
-        runtimeId: runtime.runtimeId,
-        providerRef: taskArn,
-        privateEndpoint,
-        stateVolumeRef: ready.stateVolumeId,
-      });
-
       await setOperationStatus({
         databaseUrl: input.databaseUrl,
         operationId: operation.id,
@@ -126,26 +198,6 @@ export async function executeStandardRuntimeOperation(input: {
       });
       return;
     } catch (error) {
-      if (taskArn) {
-        try {
-          await input.provisioner.stop(
-            taskArn,
-            "rollback failed Standard Runtime start",
-          );
-        } catch {
-          // Reconciler handles an orphan if cleanup cannot complete here.
-        }
-      }
-
-      if (runtime) {
-        await finishStandardRuntime({
-          databaseUrl: input.databaseUrl,
-          workspaceId: operation.workspaceId,
-          runtimeId: runtime.runtimeId,
-          finalStatus: "failed",
-        });
-      }
-
       await setOperationStatus({
         databaseUrl: input.databaseUrl,
         operationId: operation.id,
@@ -172,6 +224,13 @@ export async function executeStandardRuntimeOperation(input: {
             runtime.providerRef,
             "Workspace Standard Runtime stop",
           );
+          await waitForRuntimeStopped({
+            provisioner: input.provisioner,
+            taskArn: runtime.providerRef,
+          });
+        }
+        if (runtime.stateVolumeRef && input.snapshotManager) {
+          await input.snapshotManager.deleteVolume(runtime.stateVolumeRef);
         }
         await finishStandardRuntime({
           databaseUrl: input.databaseUrl,
@@ -180,6 +239,192 @@ export async function executeStandardRuntimeOperation(input: {
           finalStatus: "stopped",
         });
       }
+
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "succeeded",
+      });
+      return;
+    } catch (error) {
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "failed",
+        errorCode: errorCode(error),
+      });
+      throw error;
+    }
+  }
+
+  if (operation.operationType === "suspend") {
+    if (!input.snapshotManager || !input.manifestStore) {
+      const error = new Error("SNAPSHOT_DEPENDENCY_UNAVAILABLE");
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "failed",
+        errorCode: error.message,
+      });
+      throw error;
+    }
+
+    const runtime = await getActiveRuntimeForWorkspace({
+      databaseUrl: input.databaseUrl,
+      workspaceId: operation.workspaceId,
+    });
+    if (
+      !runtime ||
+      runtime.runtimeType !== "standard" ||
+      !runtime.providerRef ||
+      !runtime.stateVolumeRef
+    ) {
+      const error = new Error("STANDARD_RUNTIME_NOT_SNAPSHOT_READY");
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "failed",
+        errorCode: error.message,
+      });
+      throw error;
+    }
+
+    const snapshot = await createStandardSnapshotRecord({
+      databaseUrl: input.databaseUrl,
+      workspaceId: operation.workspaceId,
+      sourceSessionId: runtime.sessionId,
+    });
+    let taskStopped = false;
+
+    try {
+      await input.provisioner.stop(
+        runtime.providerRef,
+        "Workspace Standard Runtime suspend",
+      );
+      await waitForRuntimeStopped({
+        provisioner: input.provisioner,
+        taskArn: runtime.providerRef,
+      });
+      taskStopped = true;
+
+      const created = await input.snapshotManager.createSnapshot({
+        volumeId: runtime.stateVolumeRef,
+        workspaceId: operation.workspaceId,
+        snapshotId: snapshot.id,
+      });
+
+      const manifest = await input.manifestStore.putManifest({
+        snapshotFormatVersion: 1,
+        runtimeType: "standard",
+        payloadType: "ebs-snapshot",
+        snapshotId: snapshot.id,
+        workspaceId: operation.workspaceId,
+        sourceSessionId: runtime.sessionId,
+        ebsSnapshotId: created.snapshotId,
+        consistencyLevel: "application-consistent",
+        virtualRegions: runtime.enabledRegions,
+        createdAt: (input.now?.() ?? new Date()).toISOString(),
+      });
+
+      await finishStandardRuntime({
+        databaseUrl: input.databaseUrl,
+        workspaceId: operation.workspaceId,
+        runtimeId: runtime.runtimeId,
+        finalStatus: "stopped",
+      });
+
+      await markStandardSnapshotAvailable({
+        databaseUrl: input.databaseUrl,
+        snapshotId: snapshot.id,
+        providerSnapshotRef: created.snapshotId,
+        manifestKey: manifest.key,
+      });
+
+      try {
+        await input.snapshotManager.deleteVolume(runtime.stateVolumeRef);
+      } catch {
+        // Snapshot is already durable. Reconciler/cleanup handles orphan volume.
+      }
+
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "succeeded",
+      });
+      return;
+    } catch (error) {
+      await markSnapshotFailed({
+        databaseUrl: input.databaseUrl,
+        snapshotId: snapshot.id,
+        errorCode: errorCode(error),
+      });
+
+      if (taskStopped) {
+        await finishStandardRuntime({
+          databaseUrl: input.databaseUrl,
+          workspaceId: operation.workspaceId,
+          runtimeId: runtime.runtimeId,
+          finalStatus: "failed",
+        });
+      }
+
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "failed",
+        errorCode: errorCode(error),
+      });
+      throw error;
+    }
+  }
+
+  if (operation.operationType === "resume") {
+    if (!input.manifestStore) {
+      const error = new Error("SNAPSHOT_DEPENDENCY_UNAVAILABLE");
+      await setOperationStatus({
+        databaseUrl: input.databaseUrl,
+        operationId: operation.id,
+        status: "failed",
+        errorCode: error.message,
+      });
+      throw error;
+    }
+
+    try {
+      const snapshot = await getAvailableSnapshotForWorkspace({
+        databaseUrl: input.databaseUrl,
+        workspaceId: operation.workspaceId,
+      });
+      if (
+        !snapshot ||
+        !snapshot.providerSnapshotRef ||
+        !snapshot.manifestKey
+      ) {
+        throw new Error("AVAILABLE_SNAPSHOT_NOT_FOUND");
+      }
+
+      const manifest = await input.manifestStore.getManifest(
+        snapshot.manifestKey,
+      );
+      if (
+        manifest.workspaceId !== operation.workspaceId ||
+        manifest.snapshotId !== snapshot.id ||
+        manifest.ebsSnapshotId !== snapshot.providerSnapshotRef
+      ) {
+        throw new Error("SNAPSHOT_MANIFEST_MISMATCH");
+      }
+
+      await startStandardRuntime({
+        databaseUrl: input.databaseUrl,
+        workspaceId: operation.workspaceId,
+        provisioner: input.provisioner,
+        restoreSnapshotId: snapshot.providerSnapshotRef,
+      });
+
+      await markSnapshotRestored({
+        databaseUrl: input.databaseUrl,
+        snapshotId: snapshot.id,
+      });
 
       await setOperationStatus({
         databaseUrl: input.databaseUrl,
