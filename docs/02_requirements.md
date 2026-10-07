@@ -302,6 +302,12 @@ ECR、CloudWatch Logs、Snapshot 保存用 S3 等、Lab 実行上必要な通信
 
 Docker daemon 等を利用する Advanced Lab は Standard Lab と実行基盤・Security Group・IAM Role 等を分離すること。
 
+共有Advanced Worker上では、異なる利用者のLabを同一Host kernel上のDocker containerとして直接混在させず、Lab単位のmicroVM等の仮想化境界で分離すること。
+
+### FR-NET-006 Advanced Lab間通信分離
+
+同一Advanced Worker上の異なるLab microVM間で直接通信できないこと。guestからWorker Host管理ネットワーク、IMDS、Host filesystem、Host container runtimeへ到達できないこと。
+
 ## 6.7 データ保護
 
 ### FR-DATA-001 Lab データ既定非永続
@@ -438,7 +444,11 @@ Web/API/Standard Lab へ Docker socket をマウントしないこと。
 
 ### NFR-SEC-004 Advanced Worker
 
-Container runtime を必要とする場合は専用 Advanced Worker のみで利用すること。
+Container runtime を必要とする場合は共有Advanced Worker Pool上のLab専用microVM内でのみ利用すること。Worker Host上へ利用者containerを直接配置しないこと。
+
+### NFR-SEC-004A Advanced tenant boundary
+
+Advanced Runtimeのtenant security boundaryはDocker containerではなくmicroVM/KVM等の仮想化境界とすること。
 
 ### NFR-SEC-005 脆弱性管理
 
@@ -632,7 +642,7 @@ Snapshot payload 本体は Aurora に保存しない。
 - 障害注入
 - Lab Template / Snapshot共有
 - 講師用一括 Lab 配布
-- Advanced Lab の完全 Snapshot / Resume
+- Advanced Lab のサービス別完全Snapshot / Resume拡張
 - Snapshot 世代管理 / Clone
 - 実 AWS Sandbox 連携
 
