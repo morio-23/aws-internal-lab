@@ -11,6 +11,7 @@ function withRuntimeEnv(run: () => void) {
     process.env.LAB_WORKSPACE_ID = "workspace-runtime";
     process.env.LAB_SESSION_ID = "session-runtime";
     process.env.LAB_VIRTUAL_ACCOUNT_ID = "012345678901";
+    process.env.MINISTACK_ENDPOINT = "http://127.0.0.1:4566";
     process.env.LAB_ENABLED_REGIONS = JSON.stringify([
       "ap-northeast-1",
       "ap-northeast-3",

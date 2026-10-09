@@ -22,13 +22,20 @@ function gatewayUrl(endpoint: string, path: string): string {
 
 export class HttpRuntimeGatewayAdmin implements RuntimeGatewayAdmin {
   readonly #privateKeyPem: string;
+  readonly #bffInternalUrl: string;
   readonly #fetch: typeof fetch;
 
   constructor(input: {
     privateKeyPem: string;
+    bffInternalUrl: string;
     fetchImpl?: typeof fetch;
   }) {
     this.#privateKeyPem = input.privateKeyPem;
+    const url = new URL(input.bffInternalUrl);
+    if (!(["http:", "https:"].includes(url.protocol)) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+      throw new Error("INVALID_BFF_INTERNAL_URL");
+    }
+    this.#bffInternalUrl = url.origin;
     this.#fetch = input.fetchImpl ?? fetch;
   }
 
@@ -44,11 +51,14 @@ export class HttpRuntimeGatewayAdmin implements RuntimeGatewayAdmin {
       ttlSeconds: 60,
     });
 
-    const response = await this.#fetch(gatewayUrl(identity.endpoint, path), {
+    gatewayUrl(identity.endpoint, path);
+    const response = await this.#fetch(this.#bffInternalUrl + "/internal/runtime-admin" + path.slice("/admin".length), {
       method: "POST",
       headers: {
         authorization: "Bearer " + token,
+        "content-type": "application/json",
       },
+      body: JSON.stringify(identity),
     });
 
     if (!response.ok) {

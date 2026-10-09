@@ -19,7 +19,7 @@ Phase 0では以下を採用する。
 2. BFF/Control PlaneはDBへ記録した **Task ENI private IP + 8080** に直接接続する。
 3. Runtime側route tableはPlatform VPC CIDRのみPeeringへroutingする。
 4. Platform側route tableはRuntime VPC CIDRのみPeeringへroutingする。
-5. Runtime Task Security Groupの8080 ingressは、原則として **Platform BFF Security Group** からのみ許可する。
+5. Runtime Task Security Groupの8080 ingressは **Platform BFF Security Group** からのみ許可する。Workerの署名付き管理API要求はBFFの内部リレーが中継する。
 6. Lab GatewayはPlatform署名tokenでWorkspace / Session / Virtual Accountを再検証する。Network到達性だけを認可境界としない。
 7. BrowserからTask ENIへ到達するroute、public listener、public IPを作成しない。
 8. RuntimeからInternetおよび実AWS public endpointへfallbackする経路を作成しない。

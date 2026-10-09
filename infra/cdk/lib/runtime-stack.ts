@@ -24,6 +24,11 @@ export class RuntimeStack extends Stack {
       description: "AWS account ID hosting the Platform Control Plane",
       allowedPattern: "^[0-9]{12}$",
     });
+    const platformWorkerTaskRoleArn = new CfnParameter(this, "PlatformWorkerTaskRoleArn", {
+      type: "String",
+      description: "Exact Platform Operations Worker task role allowed to assume RuntimeOrchestratorRole",
+      allowedPattern: "^arn:[^:]+:iam::[0-9]{12}:role/.+$",
+    });
     const platformVpcCidr = new CfnParameter(this, "PlatformVpcCidr", {
       type: "String",
       description: "Platform VPC CIDR routed over the Phase 0 VPC peering connection",
@@ -113,7 +118,7 @@ export class RuntimeStack extends Stack {
         description: "Allow only Platform BFF to reach the private Lab Gateway",
       },
     );
-    platformBffIngress.addDependency(platformPeering);
+    platformBffIngress.addResourceDependency(platformPeering);
 
     const endpointSecurityGroup = new ec2.SecurityGroup(this, "EndpointSecurityGroup", {
       vpc,
@@ -300,21 +305,28 @@ export class RuntimeStack extends Stack {
     );
 
     const orchestratorRole = new iam.Role(this, "RuntimeOrchestratorRole", {
-      assumedBy: new iam.AccountPrincipal(platformAccountId.valueAsString),
+      assumedBy: new iam.ArnPrincipal(platformWorkerTaskRoleArn.valueAsString),
+      roleName: "aws-internal-lab-runtime-orchestrator",
       description:
-        "Cross-account role used by the Platform Control Plane to manage Standard Runtime tasks",
+        "Cross-account role used only by the Platform Operations Worker task role",
     });
     taskDefinition.grantRun(orchestratorRole);
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["iam:PassRole"],
         resources: [ebsInfrastructureRole.roleArn],
+        conditions: { StringEquals: { "iam:PassedToService": "ecs.amazonaws.com" } },
       }),
     );
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["ecs:StopTask", "ecs:DescribeTasks"],
-        resources: ["*"],
+        resources: [this.formatArn({
+          service: "ecs",
+          resource: "task",
+          resourceName: `${cluster.clusterName}/*`,
+        })],
+        conditions: { ArnEquals: { "ecs:cluster": cluster.clusterArn } },
       }),
     );
     orchestratorRole.addToPolicy(
@@ -327,7 +339,11 @@ export class RuntimeStack extends Stack {
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["ecs:TagResource"],
-        resources: ["*"],
+        resources: [this.formatArn({
+          service: "ecs",
+          resource: "task",
+          resourceName: `${cluster.clusterName}/*`,
+        })],
         conditions: {
           StringEquals: {
             "ecs:CreateAction": "RunTask",
@@ -336,18 +352,38 @@ export class RuntimeStack extends Stack {
         },
       }),
     );
-    orchestratorRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: [
-          "ec2:CreateSnapshot",
-          "ec2:DescribeSnapshots",
-          "ec2:DeleteSnapshot",
-          "ec2:DeleteVolume",
-          "ec2:DescribeVolumes",
-        ],
-        resources: ["*"],
-      }),
-    );
+    const managedVolumeArn = this.formatArn({ service: "ec2", resource: "volume", resourceName: "*" });
+    const managedSnapshotArn = this.formatArn({ service: "ec2", account: "", resource: "snapshot", resourceName: "*" });
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:DescribeSnapshots", "ec2:DescribeVolumes"],
+      resources: ["*"],
+      conditions: { StringEquals: { "ec2:Region": this.region } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:CreateSnapshot"],
+      resources: [managedVolumeArn],
+      conditions: { StringEquals: { "ec2:ResourceTag/ManagedBy": "aws-internal-lab" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:CreateSnapshot"],
+      resources: [managedSnapshotArn],
+      conditions: { StringEquals: { "aws:RequestTag/ManagedBy": "aws-internal-lab" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:CreateTags"],
+      resources: [managedSnapshotArn],
+      conditions: { StringEquals: { "ec2:CreateAction": "CreateSnapshot" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:DeleteSnapshot"],
+      resources: [managedSnapshotArn],
+      conditions: { StringEquals: { "ec2:ResourceTag/ManagedBy": "aws-internal-lab" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:DeleteVolume"],
+      resources: [managedVolumeArn],
+      conditions: { StringEquals: { "ec2:ResourceTag/ManagedBy": "aws-internal-lab" } },
+    }));
     snapshotBucket.grantReadWrite(orchestratorRole);
     snapshotKey.grantEncryptDecrypt(orchestratorRole);
 

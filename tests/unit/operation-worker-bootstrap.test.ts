@@ -9,11 +9,13 @@ test("operation worker requires all Standard Runtime infrastructure bindings", (
   try {
     const pair = generateRuntimeTokenKeyPair();
     process.env.STANDARD_CLUSTER_ARN = "arn:aws:ecs:ap-northeast-1:123456789012:cluster/lab";
+    process.env.RUNTIME_ORCHESTRATOR_ROLE_ARN = "arn:aws:iam::123456789012:role/aws-internal-lab-runtime-orchestrator";
     process.env.STANDARD_TASK_DEFINITION_ARN = "arn:aws:ecs:ap-northeast-1:123456789012:task-definition/lab:1";
     process.env.STANDARD_SUBNET_IDS = "subnet-a,subnet-b";
     process.env.STANDARD_SECURITY_GROUP_IDS = "sg-runtime";
     process.env.ECS_EBS_INFRASTRUCTURE_ROLE_ARN = "arn:aws:iam::123456789012:role/ecs-ebs";
     process.env.SNAPSHOT_BUCKET_NAME = "snapshot-bucket";
+    process.env.PLATFORM_BFF_INTERNAL_URL = "http://bff.internal:3001";
     process.env.PLATFORM_RUNTIME_PUBLIC_KEY_B64 = Buffer.from(
       pair.publicKeyPem,
     ).toString("base64");
@@ -35,6 +37,7 @@ test("operation worker fails closed when snapshot store binding is missing", () 
   try {
     const pair = generateRuntimeTokenKeyPair();
     process.env.STANDARD_CLUSTER_ARN = "cluster";
+    process.env.RUNTIME_ORCHESTRATOR_ROLE_ARN = "arn:aws:iam::123456789012:role/aws-internal-lab-runtime-orchestrator";
     process.env.STANDARD_TASK_DEFINITION_ARN = "task";
     process.env.STANDARD_SUBNET_IDS = "subnet-a,subnet-b";
     process.env.STANDARD_SECURITY_GROUP_IDS = "sg-runtime";

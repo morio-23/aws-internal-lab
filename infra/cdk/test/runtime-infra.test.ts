@@ -35,6 +35,10 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
     SourceSecurityGroupId: { Ref: "PlatformBffSecurityGroupId" },
     SourceSecurityGroupOwnerId: { Ref: "PlatformAccountId" },
   });
+  const gatewayIngress = Object.values(template.toJSON().Resources)
+    .filter((resource) => (resource as { Type: string }).Type === "AWS::EC2::SecurityGroupIngress")
+    .filter((resource) => (resource as { Properties?: { FromPort?: number } }).Properties?.FromPort === 8080);
+  assert.equal(gatewayIngress.length, 1);
   template.hasResourceProperties("AWS::EC2::SecurityGroupEgress", {
     IpProtocol: "tcp",
     FromPort: 443,
@@ -150,4 +154,35 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
     assert.equal(container.MountPoints?.some((mount) => mount.ContainerPath.includes("docker.sock")) ?? false, false);
     assert.equal(container.MountPoints?.every((mount) => mount.SourceVolume === "lab-state") ?? true, true);
   }
+});
+
+test("Runtime orchestrator trusts only the Platform worker task role", () => {
+  const template = Template.fromStack(new RuntimeStack(new App(), "ScopedTrustRuntime"));
+  template.hasResourceProperties("AWS::IAM::Role", {
+    AssumeRolePolicyDocument: Match.objectLike({
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Principal: { AWS: { Ref: "PlatformWorkerTaskRoleArn" } },
+        }),
+      ]),
+    }),
+  });
+  const trustDocuments = Object.values(template.toJSON().Resources)
+    .filter((resource) => (resource as { Type: string }).Type === "AWS::IAM::Role")
+    .map((resource) => JSON.stringify((resource as { Properties: { AssumeRolePolicyDocument: unknown } }).Properties.AssumeRolePolicyDocument));
+  assert.equal(trustDocuments.some((document) => document.includes("root")), false);
+});
+
+test("Runtime orchestrator can tag only new managed snapshots", () => {
+  const template = Template.fromStack(new RuntimeStack(new App(), "SnapshotPolicyRuntime"));
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: "ec2:CreateTags",
+          Condition: { StringEquals: { "ec2:CreateAction": "CreateSnapshot" } },
+        }),
+      ]),
+    },
+  });
 });

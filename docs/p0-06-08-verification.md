@@ -1,6 +1,6 @@
 # P0-06〜P0-08 検証記録と実AWS Smoke Test
 
-- Date: 2026-10-08
+- Date: 2026-10-10（PR #19最終再検証）
 - Scope: AWS非依存の実装・CDK synth・local PostgreSQL/MiniStack検証
 - 実AWS deploy: 未実施
 
@@ -21,7 +21,7 @@ Fargate GatewayはMiniStack endpointを`127.0.0.1`のHTTP loopbackに限定し�
 
 ## P0-07 Issue #8 local結果
 
-`pnpm test:integration:db`の14件がlocal PostgreSQL/MiniStackで成功。MiniStackのS3 bucket/object、DynamoDB table/item、SQS queue/message、東京/大阪state分離、Virtual Account/Workspace分離、Control Plane/BFF → 署名付きLab Gateway → MiniStackの操作を含む。Service Capabilityは代表operationのsubsetであり、サービス全体のAWS互換性を意味しない。
+`pnpm test:integration:db`の15件がlocal PostgreSQL/MiniStackで成功。MiniStackのS3 bucket/object、DynamoDB table/item、SQS queue/message、東京/大阪state分離、Virtual Account/Workspace分離、Control Plane/BFF → 署名付きLab Gateway → MiniStackの操作を含む。Service Capabilityは代表operationのsubsetであり、サービス全体のAWS互換性を意味しない。
 
 ## P0-08 Issue #9 local結果
 
@@ -42,11 +42,32 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/persis
 - MiniStack 1.5.22のlive persist overlayを追加。Gatewayからloopbackでpersistし、filesystem sync後にEBS Snapshotを作成する非破壊順序へ変更した。
 - EBS Snapshot/manifest作成失敗時はStopTaskを実行せずGatewayをunquiesceする。DB integration testでこのrollbackを固定した。
 
+## PR #19 作業依頼の最終ローカル検証
+
+PR本文に記載された追補前の実測値はunit 46件、DB/MiniStack integration 14件。今回の差分に対する実測値は下表のとおり。`pnpm check`はCIと同じ `MINISTACK_ENDPOINT=http://localhost:4566` を設定して実行した。Gateway fixtureだけで `http://127.0.0.1:4566` を明示し、public endpoint拒否は維持した。
+
+| 実行 | 結果 | 件数・対象 |
+| --- | --- | --- |
+| `pnpm check` | PASS | lint、architecture boundaries、typecheck、CDK typecheck、unit 64/64、TypeScript build、Web build |
+| `pnpm cdk:synth` | PASS | PlatformOperations、PlatformRuntimeConnectivity、Runtimeの既存3 Stack |
+| `pnpm test:integration:db` | PASS | local PostgreSQL/MiniStack 15/15、FAIL 0、SKIP 0。S3/DynamoDB/SQS、Virtual Account/Region分離、Snapshot rollbackを含む |
+| `docker build -f runtime/standard/ministack.Dockerfile` | PASS | MiniStack 1.5.22 overlay |
+| MiniStack live persist→状態ファイル→health | PASS | 稼働中のS3/DynamoDB/SQSを書き込み、3つのJSONを確認。元containerは稼働継続 |
+| 保存volumeの別volumeへのcopy→別containerでverify | PASS | S3 object body、DynamoDB item、SQS messageを復元 |
+| `docker build -f runtime/standard/operation-worker.Dockerfile` | PASS | Worker imageのローカルbuild |
+
+ローカルsmokeで、root所有の新規volume上ではMiniStack 1.5.22の`save_state`がPermission deniedをログへ記録する一方、元のoverlayはpersist成功を返す問題を検出した。entrypointでstate/S3 data directoryを非rootのMiniStack userへ譲渡し、persist後はcollector失敗と各state fileの更新を確認してから成功を返すよう修正した。CI smokeもroot所有のDocker volumeでS3/DynamoDB/SQS state fileとhealthを検証する。
+
+書き込み不能を再現するためstate directoryを一時的にmode 555へ変更するとpersistはHTTP 500を返し、mode 755へ戻すと再び成功した。権限はテスト後に復元済み。
+
+Gateway quiesce/drain/unquiesce、署名付きadmin、Snapshot/manifest失敗時の元Runtime継続とStopTask未実行、corrupt/incomplete manifest拒否、orphan Task/Volume/Snapshot cleanupはunit/DB integrationに含まれる。実EBS Snapshotと実Fargateのapplication consistencyは未検証。
+
 ## 実AWS Smoke Testチェックリスト
 
 - [ ] RuntimeStackを隔離した検証Accountへdeployし、2 AZ subnet、route table、NAT/IGWなし、4 endpoint、private DNSを確認する。
 - [ ] GatewayとMiniStackの固定image digestをECRへpushし、ECR pull/CloudWatch Logs送信がisolated subnetから成功することを確認する。Runtime Task SGのegressがInterface Endpoint:443とS3 managed prefix list:443以外へ通らないことも確認する。
-- [ ] Platform側VPC Peering作成、reciprocal route、BFF Security GroupをIaC化し、RuntimeStackのPeering parameterへ接続する。Platform/BFFからRuntime Gateway:8080へ到達し、Browser/他SGから到達できないことを確認する。
+- [ ] PlatformOps→Runtime→PlatformConnectivity→PlatformOps更新の順にdeployし、reciprocal routeとBFF SG限定8080 ingressを確認する。Worker→内部BFF→Gatewayの署名付き管理APIとBFF→Gatewayが成功し、Worker/Browser/他SGからGatewayへ直接到達できないことを確認する。
+- [ ] Worker Serviceが専用SGのみを使い、private subnetでpublic IPなし、QueueとDB/BFF内部portへ到達し、STSでRuntime roleをAssumeRoleしてECS/EC2/S3を操作できることを確認する。既存private route tableにInternet Gateway/NAT Gatewayへのdefault routeがないことを確認する。
 - [ ] API startを実行し、TaskがFARGATE、public IPなし、Task Roleに業務AWS権限なし、privilegedなし、Docker socket mountなし、Workspace/Session/Virtual Account bindingありと確認する。
 - [ ] Lab Credentialから実AWS public endpointへの通信が失敗し、AWS credentialがLabへ渡されないことを確認する。
 - [ ] API stop後にTask停止、Session終了、source EBS volumeの削除を確認する。
@@ -61,8 +82,8 @@ GatewayにはPlatform token必須の `POST /admin/quiesce` / `POST /admin/persis
 
 ## Blocker / known limitations
 
-1. ADR-0005の接続方式は確定しRuntime側IaCも追加したが、Platform側VPC Peering作成・reciprocal route・BFF/Worker SGのIaCは未実装。実AWS疎通は未確認。Runtime側はDefault Deny egressへ変更済みで、deploy時にRegionのS3 managed prefix list IDをparameterとして渡す必要がある。
-2. SQS FIFO/DLQとWorker用ECRはPlatformOperationsStackへ追加した。Operation Worker ECS Service、Task Role、DB secret/network、Queue権限、Runtime Accountへの権限委譲は未整備。
+1. Platform側reciprocal route、Worker専用SG/Service、FIFO権限、Secrets Manager注入、VPC endpoint、cross-account STSはCDK synthとunit testまで実装した。Worker管理APIは内部BFFリレーへ変更し、Gateway:8080 ingressはBFF SGだけに限定した。既存BFF SG/private subnet/route table、DB、Secret、S3 prefix list IDを接続して実AWSで検証する作業は未実施。WorkerへBFF SGを付けないことはtemplate assertionで確認した。importしたprivate route tableにInternet fallbackがないことはCDK assertionだけでは保証できず、deploy前に実リソースを確認する。
+2. PlatformOperationsStackは初回`WorkerDesiredCount=0`で作り、RuntimeStack outputsとWorker imageを登録した後に`1`へ更新する。実Queue配送、WorkerのECS/DB/STS/EC2/S3権限、Peering/BFF→Gateway疎通は未検証。詳細は`infra/cdk/README.md`。
 3. MiniStack標準機能はshutdown保存のみだが、ADR-0006のPhase 0 overlayでlive persistを追加し、Suspendを `quiesce -> live persist -> EBS Snapshot -> manifest -> StopTask` に変更した。Snapshot/manifest失敗時は元Taskを止めずunquiesceするため、非破壊rollbackはローカル実装上成立した。実EBS上でのapplication consistencyはAWS Smoke未確認。
 4. Managed EBS volume/Snapshotの所有tagとorphan cleanupは実装したが、実ECS managed EBSでtag/status/削除、およびpending EBS Snapshot削除要求が想定通りになることはAWS Smokeで確認が必要。
 5. EBS Snapshot作成、task volume attach、Fargate上のMiniStack graceful shutdown、Endpoint経由image pullは実AWSで未確認。Issue #9はOpenのまま維持する。

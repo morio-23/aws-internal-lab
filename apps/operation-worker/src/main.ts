@@ -1,6 +1,3 @@
-import { ECSClient } from "@aws-sdk/client-ecs";
-import { EC2Client } from "@aws-sdk/client-ec2";
-import { S3Client } from "@aws-sdk/client-s3";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -14,6 +11,7 @@ import {
 } from "../../../packages/runtime-control/src/snapshot-manifest.js";
 import { SqsOperationQueue } from "./operation-queue.js";
 import { HttpRuntimeGatewayAdmin } from "./runtime-gateway-admin.js";
+import { createRuntimeAccountClients, createRuntimeAccountCredentials } from "./runtime-account-credentials.js";
 import { runStandardWorkerCycle } from "./worker-cycle.js";
 
 function required(name: string): string {
@@ -33,6 +31,11 @@ function csv(name: string): string[] {
 
 export function createStandardRuntimeDependenciesFromEnvironment() {
   const region = process.env.AWS_REGION ?? "ap-northeast-1";
+  const credentials = createRuntimeAccountCredentials({
+    roleArn: required("RUNTIME_ORCHESTRATOR_ROLE_ARN"),
+    region,
+  });
+  const clients = createRuntimeAccountClients({ region, credentials });
 
   const platformPrivateKeyPem = Buffer.from(
     required("PLATFORM_RUNTIME_PRIVATE_KEY_B64"),
@@ -50,17 +53,18 @@ export function createStandardRuntimeDependenciesFromEnvironment() {
         required("PLATFORM_RUNTIME_PUBLIC_KEY_B64"),
         "base64",
       ).toString("utf8"),
-      client: new ECSClient({ region }),
+      client: clients.ecs,
     }),
     snapshotManager: new AwsStandardSnapshotManager({
-      client: new EC2Client({ region }),
+      client: clients.ec2,
     }),
     manifestStore: new S3SnapshotManifestStore({
       bucket: required("SNAPSHOT_BUCKET_NAME"),
-      client: new S3Client({ region }),
+      client: clients.s3,
     }),
     gatewayAdmin: new HttpRuntimeGatewayAdmin({
       privateKeyPem: platformPrivateKeyPem,
+      bffInternalUrl: required("PLATFORM_BFF_INTERNAL_URL"),
     }),
   };
 }

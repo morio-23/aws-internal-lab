@@ -13,6 +13,7 @@ import type {
 import {
   getActiveRuntimeForWorkspace,
 } from "../../packages/db/src/runtime-repository.js";
+import { generateRuntimeTokenKeyPair, signRuntimeToken } from "../../packages/runtime-auth/src/index.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -97,6 +98,30 @@ test("workspace start/stop API drives Standard Runtime lifecycle", async (t) => 
     });
     assert.equal(active?.providerRef, "task-api-prototype");
     assert.equal(active?.privateEndpoint, "10.30.2.30:8080");
+
+    const relayKeys = generateRuntimeTokenKeyPair();
+    const previousPrivateKey = process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64;
+    process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64 = Buffer.from(relayKeys.privateKeyPem).toString("base64");
+    try {
+      const relayIdentity = {
+        endpoint: "10.30.2.31:8080",
+        workspaceId,
+        sessionId: active!.sessionId,
+        virtualAccountId: active!.virtualAccountId,
+      };
+      const relayResponse = await fetch(baseUrl + "/internal/runtime-admin/persist", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer " + signRuntimeToken({ privateKeyPem: relayKeys.privateKeyPem, ...relayIdentity }),
+        },
+        body: JSON.stringify(relayIdentity),
+      });
+      assert.equal(relayResponse.status, 409);
+    } finally {
+      if (previousPrivateKey === undefined) delete process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64;
+      else process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64 = previousPrivateKey;
+    }
 
     const stopResponse = await fetch(
       baseUrl + "/api/v1/workspaces/" + workspaceId + "/stop",
