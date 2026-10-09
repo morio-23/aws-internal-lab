@@ -6,6 +6,7 @@ import {
   DeleteSnapshotCommand,
   DeleteVolumeCommand,
   DescribeSnapshotsCommand,
+  DescribeVolumesCommand,
 } from "@aws-sdk/client-ec2";
 
 import { AwsStandardSnapshotManager } from "../../packages/runtime-control/src/standard-snapshot.js";
@@ -63,4 +64,154 @@ test("Standard snapshot manager deletes source volume and snapshot explicitly", 
 
   assert.equal(seen[0] instanceof DeleteVolumeCommand, true);
   assert.equal(seen[1] instanceof DeleteSnapshotCommand, true);
+});
+
+
+test("Standard snapshot manager inventories only available managed volumes across pages", async () => {
+  const manager = new AwsStandardSnapshotManager({
+    client: {
+      async send(command) {
+        if (command instanceof DescribeVolumesCommand) {
+          if (command.input.NextToken) {
+            return {
+              Volumes: [
+                {
+                  VolumeId: "vol-orphan-2",
+                  CreateTime: new Date("2026-10-07T09:00:00Z"),
+                },
+              ],
+            };
+          }
+          assert.deepEqual(command.input.Filters, [
+            { Name: "tag:ManagedBy", Values: ["aws-internal-lab"] },
+            { Name: "status", Values: ["available"] },
+          ]);
+          return {
+            Volumes: [
+              {
+                VolumeId: "vol-orphan-1",
+                CreateTime: new Date("2026-10-07T08:00:00Z"),
+              },
+              { VolumeId: undefined, CreateTime: new Date() },
+            ],
+            NextToken: "next",
+          };
+        }
+        return {};
+      },
+    },
+  });
+
+  assert.deepEqual(await manager.listManagedVolumes(), [
+    {
+      volumeId: "vol-orphan-1",
+      createTime: new Date("2026-10-07T08:00:00Z"),
+    },
+    {
+      volumeId: "vol-orphan-2",
+      createTime: new Date("2026-10-07T09:00:00Z"),
+    },
+  ]);
+});
+
+
+test("Standard snapshot manager deletes its managed snapshot after timeout", async () => {
+  const deleted: string[] = [];
+  const manager = new AwsStandardSnapshotManager({
+    pollIntervalMs: 0,
+    maxPollAttempts: 2,
+    client: {
+      async send(command) {
+        if (command instanceof CreateSnapshotCommand) {
+          return { SnapshotId: "snap-timeout" };
+        }
+        if (command instanceof DescribeSnapshotsCommand) {
+          return { Snapshots: [{ State: "pending" }] };
+        }
+        if (command instanceof DeleteSnapshotCommand) {
+          if (command.input.SnapshotId) deleted.push(command.input.SnapshotId);
+          return {};
+        }
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      manager.createSnapshot({
+        volumeId: "vol-timeout",
+        workspaceId: "workspace-timeout",
+        snapshotId: "lab-snapshot-timeout",
+      }),
+    /EBS_SNAPSHOT_TIMEOUT/,
+  );
+  assert.deepEqual(deleted, ["snap-timeout"]);
+});
+
+
+test("Standard snapshot manager inventories only self-owned managed snapshots with logical IDs", async () => {
+  const manager = new AwsStandardSnapshotManager({
+    client: {
+      async send(command) {
+        if (command instanceof DescribeSnapshotsCommand) {
+          assert.deepEqual(command.input.OwnerIds, ["self"]);
+          assert.deepEqual(command.input.Filters, [
+            { Name: "tag:ManagedBy", Values: ["aws-internal-lab"] },
+          ]);
+          if (command.input.NextToken) {
+            return {
+              Snapshots: [
+                {
+                  SnapshotId: "snap-managed-2",
+                  StartTime: new Date("2026-10-07T09:30:00Z"),
+                  State: "pending",
+                  Tags: [
+                    { Key: "ManagedBy", Value: "aws-internal-lab" },
+                    { Key: "LabSnapshotId", Value: "lab-snapshot-2" },
+                  ],
+                },
+              ],
+            };
+          }
+          return {
+            Snapshots: [
+              {
+                SnapshotId: "snap-managed-1",
+                StartTime: new Date("2026-10-07T09:00:00Z"),
+                State: "completed",
+                Tags: [
+                  { Key: "ManagedBy", Value: "aws-internal-lab" },
+                  { Key: "LabSnapshotId", Value: "lab-snapshot-1" },
+                ],
+              },
+              {
+                SnapshotId: "snap-missing-logical-id",
+                StartTime: new Date("2026-10-07T09:10:00Z"),
+                State: "completed",
+                Tags: [{ Key: "ManagedBy", Value: "aws-internal-lab" }],
+              },
+            ],
+            NextToken: "next",
+          };
+        }
+        return {};
+      },
+    },
+  });
+
+  assert.deepEqual(await manager.listManagedSnapshots(), [
+    {
+      snapshotId: "snap-managed-1",
+      labSnapshotId: "lab-snapshot-1",
+      startTime: new Date("2026-10-07T09:00:00Z"),
+      state: "completed",
+    },
+    {
+      snapshotId: "snap-managed-2",
+      labSnapshotId: "lab-snapshot-2",
+      startTime: new Date("2026-10-07T09:30:00Z"),
+      state: "pending",
+    },
+  ]);
 });

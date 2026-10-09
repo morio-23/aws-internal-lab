@@ -1,12 +1,35 @@
 import { App } from "aws-cdk-lib";
 
+import { PlatformOperationsStack } from "../lib/platform-operations-stack.js";
+import { PlatformRuntimeConnectivityStack } from "../lib/platform-runtime-connectivity-stack.js";
 import { RuntimeStack } from "../lib/runtime-stack.js";
 
-const app = new App();
+const app = new App({ outdir: "cdk.out" });
+
+new PlatformOperationsStack(app, "AwsInternalLabPlatformOperations", {
+  env: {
+    account: process.env.PLATFORM_AWS_ACCOUNT ?? process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-1",
+  },
+  description: "AWS Internal Lab Phase 0 Platform operation queue",
+});
+
+new PlatformRuntimeConnectivityStack(
+  app,
+  "AwsInternalLabPlatformRuntimeConnectivity",
+  {
+    env: {
+      account: process.env.PLATFORM_AWS_ACCOUNT ?? process.env.CDK_DEFAULT_ACCOUNT,
+      region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-1",
+    },
+    description:
+      "AWS Internal Lab Phase 0 Platform reciprocal routes to Standard Runtime",
+  },
+);
 
 new RuntimeStack(app, "AwsInternalLabRuntime", {
   env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
+    account: process.env.RUNTIME_AWS_ACCOUNT ?? process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-1",
   },
   description: "AWS Internal Lab Phase 0 Standard Runtime",

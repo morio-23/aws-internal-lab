@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -53,6 +54,51 @@ jobs:
 
       - name: Quality checks
         run: pnpm check
+
+      - name: Build Standard MiniStack overlay image
+        run: docker build -f runtime/standard/ministack.Dockerfile -t aws-internal-lab-ministack:p0 .
+
+      - name: Smoke MiniStack live persist overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name aws-lab-ministack-overlay \
+            -p 4567:4566 \
+            -v aws-lab-ministack-overlay-state:/lab-state \
+            -e PERSIST_STATE=1 \
+            -e STATE_DIR=/lab-state/state \
+            -e S3_PERSIST=1 \
+            -e S3_DATA_DIR=/lab-state/s3-data \
+            aws-internal-lab-ministack:p0
+          cleanup() {
+            docker rm -f aws-lab-ministack-overlay >/dev/null 2>&1 || true
+            docker volume rm aws-lab-ministack-overlay-state >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4567/_ministack/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker logs aws-lab-ministack-overlay
+              exit 1
+            fi
+            sleep 1
+          done
+
+          SNAPSHOT_PROBE_PHASE=write \
+            SNAPSHOT_PROBE_ID=ci-live-persist \
+            MINISTACK_ENDPOINT=http://127.0.0.1:4567 \
+            node --import tsx --test tests/snapshot/ministack-persistence.test.ts
+
+          docker exec aws-lab-ministack-overlay python -c \
+            "import urllib.request; r=urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:4566/_aws_internal_lab/persist', data=b'', method='POST'), timeout=10); assert r.status == 200"
+
+          docker exec aws-lab-ministack-overlay test -s /lab-state/state/sqs.json
+          docker exec aws-lab-ministack-overlay test -s /lab-state/state/dynamodb.json
+          docker exec aws-lab-ministack-overlay test -s /lab-state/state/s3.json
+          curl --fail --silent http://127.0.0.1:4567/_ministack/health >/dev/null
 
       - name: Apply fresh database migrations
         run: pnpm db:migrate

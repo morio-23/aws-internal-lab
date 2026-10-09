@@ -11,6 +11,7 @@ function withRuntimeEnv(run: () => void) {
     process.env.LAB_WORKSPACE_ID = "workspace-runtime";
     process.env.LAB_SESSION_ID = "session-runtime";
     process.env.LAB_VIRTUAL_ACCOUNT_ID = "012345678901";
+    process.env.MINISTACK_ENDPOINT = "http://127.0.0.1:4566";
     process.env.LAB_ENABLED_REGIONS = JSON.stringify([
       "ap-northeast-1",
       "ap-northeast-3",
@@ -48,6 +49,16 @@ test("Fargate Lab Gateway rejects unsupported enabled regions at startup", () =>
     assert.throws(
       () => createRuntimeGatewayFromEnvironment(),
       /Unsupported virtual region/,
+    );
+  });
+});
+
+test("Fargate Lab Gateway rejects a public MiniStack endpoint", () => {
+  withRuntimeEnv(() => {
+    process.env.MINISTACK_ENDPOINT = "https://s3.ap-northeast-1.amazonaws.com";
+    assert.throws(
+      () => createRuntimeGatewayFromEnvironment(),
+      /MINISTACK_ENDPOINT_MUST_BE_LOOPBACK/,
     );
   });
 });

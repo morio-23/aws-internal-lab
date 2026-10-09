@@ -15,6 +15,36 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
   template.resourceCountIs("AWS::ECS::Cluster", 1);
   template.resourceCountIs("AWS::ECR::Repository", 2);
   template.resourceCountIs("AWS::EC2::VPCEndpoint", 4);
+  template.resourceCountIs("AWS::EC2::Route", 2);
+  template.resourceCountIs("AWS::EC2::VPCPeeringConnection", 1);
+
+  template.hasResourceProperties("AWS::EC2::VPCPeeringConnection", {
+    VpcId: Match.anyValue(),
+    PeerVpcId: { Ref: "PlatformVpcId" },
+    PeerOwnerId: { Ref: "PlatformAccountId" },
+    PeerRoleArn: { Ref: "PlatformVpcPeeringRoleArn" },
+  });
+  template.hasResourceProperties("AWS::EC2::Route", {
+    DestinationCidrBlock: { Ref: "PlatformVpcCidr" },
+    VpcPeeringConnectionId: Match.anyValue(),
+  });
+  template.hasResourceProperties("AWS::EC2::SecurityGroupIngress", {
+    IpProtocol: "tcp",
+    FromPort: 8080,
+    ToPort: 8080,
+    SourceSecurityGroupId: { Ref: "PlatformBffSecurityGroupId" },
+    SourceSecurityGroupOwnerId: { Ref: "PlatformAccountId" },
+  });
+  const gatewayIngress = Object.values(template.toJSON().Resources)
+    .filter((resource) => (resource as { Type: string }).Type === "AWS::EC2::SecurityGroupIngress")
+    .filter((resource) => (resource as { Properties?: { FromPort?: number } }).Properties?.FromPort === 8080);
+  assert.equal(gatewayIngress.length, 1);
+  template.hasResourceProperties("AWS::EC2::SecurityGroupEgress", {
+    IpProtocol: "tcp",
+    FromPort: 443,
+    ToPort: 443,
+    DestinationPrefixListId: { Ref: "S3ManagedPrefixListId" },
+  });
 
   template.hasResourceProperties("AWS::ECS::TaskDefinition", {
     Cpu: "1024",
@@ -53,6 +83,24 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
     }),
   });
 
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({ Action: "ecs:ListTasks" }),
+      ]),
+    },
+  });
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: "ecs:TagResource",
+          Condition: Match.objectLike({ StringEquals: Match.objectLike({ "ecs:CreateAction": "RunTask" }) }),
+        }),
+      ]),
+    },
+  });
+
   const json = template.toJSON();
   const subnets = Object.values(json.Resources).filter(
     (resource) =>
@@ -65,4 +113,76 @@ test("RuntimeStack creates an isolated Fargate runtime with private AWS endpoint
       (resource as { Type?: string }).Type === "AWS::EC2::InternetGateway",
   );
   assert.equal(internetGateways.length, 0);
+
+  const taskSecurityGroup = Object.values(json.Resources).find(
+    (resource) =>
+      (resource as { Type?: string; Properties?: { GroupDescription?: string } }).Type ===
+        "AWS::EC2::SecurityGroup" &&
+      (resource as { Properties?: { GroupDescription?: string } }).Properties
+        ?.GroupDescription === "Standard Lab Fargate task security group",
+  ) as {
+    Properties: {
+      SecurityGroupEgress?: Array<{ CidrIp?: string; IpProtocol?: string }>;
+    };
+  };
+  assert.ok(taskSecurityGroup);
+  assert.equal(
+    taskSecurityGroup.Properties.SecurityGroupEgress?.some(
+      (rule) => rule.CidrIp === "0.0.0.0/0",
+    ) ?? false,
+    false,
+  );
+
+  const endpoints = Object.values(json.Resources)
+    .filter((resource) => (resource as { Type?: string }).Type === "AWS::EC2::VPCEndpoint")
+    .map((resource) => (resource as { Properties: { VpcEndpointType: string; ServiceName: unknown } }).Properties);
+  assert.deepEqual(
+    endpoints.map((endpoint) => endpoint.VpcEndpointType).sort(),
+    ["Gateway", "Interface", "Interface", "Interface"],
+  );
+  const serviceNames = endpoints.map((endpoint) => JSON.stringify(endpoint.ServiceName));
+  for (const service of ["s3", "ecr.api", "ecr.dkr", "logs"]) {
+    assert.equal(serviceNames.some((name) => name.includes(service)), true);
+  }
+
+  const taskDefinition = Object.values(json.Resources).find(
+    (resource) => (resource as { Type?: string }).Type === "AWS::ECS::TaskDefinition",
+  ) as { Properties: { ContainerDefinitions: Array<{ Privileged?: boolean; MountPoints?: Array<{ SourceVolume: string; ContainerPath: string }> }> } };
+  assert.equal(taskDefinition.Properties.ContainerDefinitions.length, 2);
+  for (const container of taskDefinition.Properties.ContainerDefinitions) {
+    assert.equal(container.Privileged, false);
+    assert.equal(container.MountPoints?.some((mount) => mount.ContainerPath.includes("docker.sock")) ?? false, false);
+    assert.equal(container.MountPoints?.every((mount) => mount.SourceVolume === "lab-state") ?? true, true);
+  }
+});
+
+test("Runtime orchestrator trusts only the Platform worker task role", () => {
+  const template = Template.fromStack(new RuntimeStack(new App(), "ScopedTrustRuntime"));
+  template.hasResourceProperties("AWS::IAM::Role", {
+    AssumeRolePolicyDocument: Match.objectLike({
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Principal: { AWS: { Ref: "PlatformWorkerTaskRoleArn" } },
+        }),
+      ]),
+    }),
+  });
+  const trustDocuments = Object.values(template.toJSON().Resources)
+    .filter((resource) => (resource as { Type: string }).Type === "AWS::IAM::Role")
+    .map((resource) => JSON.stringify((resource as { Properties: { AssumeRolePolicyDocument: unknown } }).Properties.AssumeRolePolicyDocument));
+  assert.equal(trustDocuments.some((document) => document.includes("root")), false);
+});
+
+test("Runtime orchestrator can tag only new managed snapshots", () => {
+  const template = Template.fromStack(new RuntimeStack(new App(), "SnapshotPolicyRuntime"));
+  template.hasResourceProperties("AWS::IAM::Policy", {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: "ec2:CreateTags",
+          Condition: { StringEquals: { "ec2:CreateAction": "CreateSnapshot" } },
+        }),
+      ]),
+    },
+  });
 });

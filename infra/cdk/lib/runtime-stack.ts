@@ -24,6 +24,48 @@ export class RuntimeStack extends Stack {
       description: "AWS account ID hosting the Platform Control Plane",
       allowedPattern: "^[0-9]{12}$",
     });
+    const platformWorkerTaskRoleArn = new CfnParameter(this, "PlatformWorkerTaskRoleArn", {
+      type: "String",
+      description: "Exact Platform Operations Worker task role allowed to assume RuntimeOrchestratorRole",
+      allowedPattern: "^arn:[^:]+:iam::[0-9]{12}:role/.+$",
+    });
+    const platformVpcCidr = new CfnParameter(this, "PlatformVpcCidr", {
+      type: "String",
+      description: "Platform VPC CIDR routed over the Phase 0 VPC peering connection",
+      allowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$",
+    });
+    const platformBffSecurityGroupId = new CfnParameter(
+      this,
+      "PlatformBffSecurityGroupId",
+      {
+        type: "String",
+        description: "Platform BFF security group allowed to reach Lab Gateway:8080",
+        allowedPattern: "^sg-[0-9a-fA-F]+$",
+      },
+    );
+    const s3ManagedPrefixListId = new CfnParameter(
+      this,
+      "S3ManagedPrefixListId",
+      {
+        type: "String",
+        description: "AWS-managed S3 prefix list ID for the deployment Region",
+        allowedPattern: "^pl-[0-9a-fA-F]+$",
+      },
+    );
+    const platformVpcId = new CfnParameter(this, "PlatformVpcId", {
+      type: "String",
+      description: "Existing Platform VPC to peer with the Runtime VPC",
+      allowedPattern: "^vpc-[0-9a-fA-F]+$",
+    });
+    const platformVpcPeeringRoleArn = new CfnParameter(
+      this,
+      "PlatformVpcPeeringRoleArn",
+      {
+        type: "String",
+        description:
+          "Platform-account role that permits CloudFormation to accept the VPC peering connection",
+      },
+    );
 
     const vpc = new ec2.Vpc(this, "RuntimeVpc", {
       ipAddresses: ec2.IpAddresses.cidr("10.30.0.0/16"),
@@ -38,11 +80,45 @@ export class RuntimeStack extends Stack {
       ],
     });
 
+    const platformPeering = new ec2.CfnVPCPeeringConnection(
+      this,
+      "PlatformRuntimeVpcPeering",
+      {
+        vpcId: vpc.vpcId,
+        peerVpcId: platformVpcId.valueAsString,
+        peerOwnerId: platformAccountId.valueAsString,
+        peerRoleArn: platformVpcPeeringRoleArn.valueAsString,
+        tags: [{ key: "ManagedBy", value: "aws-internal-lab" }],
+      },
+    );
+
+    vpc.isolatedSubnets.forEach((subnet, index) => {
+      new ec2.CfnRoute(this, `PlatformPeeringRoute${index + 1}`, {
+        routeTableId: subnet.routeTable.routeTableId,
+        destinationCidrBlock: platformVpcCidr.valueAsString,
+        vpcPeeringConnectionId: platformPeering.ref,
+      });
+    });
+
     const taskSecurityGroup = new ec2.SecurityGroup(this, "StandardTaskSecurityGroup", {
       vpc,
       description: "Standard Lab Fargate task security group",
-      allowAllOutbound: true,
+      allowAllOutbound: false,
     });
+    const platformBffIngress = new ec2.CfnSecurityGroupIngress(
+      this,
+      "PlatformBffToLabGateway",
+      {
+        groupId: taskSecurityGroup.securityGroupId,
+        ipProtocol: "tcp",
+        fromPort: 8080,
+        toPort: 8080,
+        sourceSecurityGroupId: platformBffSecurityGroupId.valueAsString,
+        sourceSecurityGroupOwnerId: platformAccountId.valueAsString,
+        description: "Allow only Platform BFF to reach the private Lab Gateway",
+      },
+    );
+    platformBffIngress.addResourceDependency(platformPeering);
 
     const endpointSecurityGroup = new ec2.SecurityGroup(this, "EndpointSecurityGroup", {
       vpc,
@@ -54,6 +130,19 @@ export class RuntimeStack extends Stack {
       ec2.Port.tcp(443),
       "Allow Standard Runtime access to AWS private endpoints",
     );
+    taskSecurityGroup.addEgressRule(
+      endpointSecurityGroup,
+      ec2.Port.tcp(443),
+      "Allow only ECR and CloudWatch Logs interface endpoints",
+    );
+    new ec2.CfnSecurityGroupEgress(this, "StandardTaskToS3Egress", {
+      groupId: taskSecurityGroup.securityGroupId,
+      ipProtocol: "tcp",
+      fromPort: 443,
+      toPort: 443,
+      destinationPrefixListId: s3ManagedPrefixListId.valueAsString,
+      description: "Allow ECR image layer downloads through the S3 gateway endpoint",
+    });
 
     vpc.addGatewayEndpoint("S3Endpoint", {
       service: ec2.GatewayVpcEndpointAwsService.S3,
@@ -216,39 +305,92 @@ export class RuntimeStack extends Stack {
     );
 
     const orchestratorRole = new iam.Role(this, "RuntimeOrchestratorRole", {
-      assumedBy: new iam.AccountPrincipal(platformAccountId.valueAsString),
+      assumedBy: new iam.ArnPrincipal(platformWorkerTaskRoleArn.valueAsString),
+      roleName: "aws-internal-lab-runtime-orchestrator",
       description:
-        "Cross-account role used by the Platform Control Plane to manage Standard Runtime tasks",
+        "Cross-account role used only by the Platform Operations Worker task role",
     });
     taskDefinition.grantRun(orchestratorRole);
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["iam:PassRole"],
         resources: [ebsInfrastructureRole.roleArn],
+        conditions: { StringEquals: { "iam:PassedToService": "ecs.amazonaws.com" } },
       }),
     );
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["ecs:StopTask", "ecs:DescribeTasks"],
-        resources: ["*"],
+        resources: [this.formatArn({
+          service: "ecs",
+          resource: "task",
+          resourceName: `${cluster.clusterName}/*`,
+        })],
+        conditions: { ArnEquals: { "ecs:cluster": cluster.clusterArn } },
       }),
     );
     orchestratorRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: [
-          "ec2:CreateSnapshot",
-          "ec2:DescribeSnapshots",
-          "ec2:DeleteSnapshot",
-          "ec2:DeleteVolume",
-          "ec2:DescribeVolumes",
-        ],
+        actions: ["ecs:ListTasks"],
         resources: ["*"],
+        conditions: { ArnEquals: { "ecs:cluster": cluster.clusterArn } },
       }),
     );
+    orchestratorRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ecs:TagResource"],
+        resources: [this.formatArn({
+          service: "ecs",
+          resource: "task",
+          resourceName: `${cluster.clusterName}/*`,
+        })],
+        conditions: {
+          StringEquals: {
+            "ecs:CreateAction": "RunTask",
+            "aws:RequestTag/ManagedBy": "aws-internal-lab",
+          },
+        },
+      }),
+    );
+    const managedVolumeArn = this.formatArn({ service: "ec2", resource: "volume", resourceName: "*" });
+    const managedSnapshotArn = this.formatArn({ service: "ec2", account: "", resource: "snapshot", resourceName: "*" });
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:DescribeSnapshots", "ec2:DescribeVolumes"],
+      resources: ["*"],
+      conditions: { StringEquals: { "ec2:Region": this.region } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:CreateSnapshot"],
+      resources: [managedVolumeArn],
+      conditions: { StringEquals: { "ec2:ResourceTag/ManagedBy": "aws-internal-lab" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:CreateSnapshot"],
+      resources: [managedSnapshotArn],
+      conditions: { StringEquals: { "aws:RequestTag/ManagedBy": "aws-internal-lab" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:CreateTags"],
+      resources: [managedSnapshotArn],
+      conditions: { StringEquals: { "ec2:CreateAction": "CreateSnapshot" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:DeleteSnapshot"],
+      resources: [managedSnapshotArn],
+      conditions: { StringEquals: { "ec2:ResourceTag/ManagedBy": "aws-internal-lab" } },
+    }));
+    orchestratorRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ec2:DeleteVolume"],
+      resources: [managedVolumeArn],
+      conditions: { StringEquals: { "ec2:ResourceTag/ManagedBy": "aws-internal-lab" } },
+    }));
     snapshotBucket.grantReadWrite(orchestratorRole);
     snapshotKey.grantEncryptDecrypt(orchestratorRole);
 
     new CfnOutput(this, "RuntimeVpcId", { value: vpc.vpcId });
+    new CfnOutput(this, "PlatformRuntimeVpcPeeringId", {
+      value: platformPeering.ref,
+    });
     new CfnOutput(this, "StandardClusterArn", { value: cluster.clusterArn });
     new CfnOutput(this, "RuntimeOrchestratorRoleArn", {
       value: orchestratorRole.roleArn,

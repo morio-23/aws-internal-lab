@@ -6,5 +6,7 @@ coverage/
 .env.*
 !.env.example
 cdk.out/
+.corepack/
+.tool-bin/
 *.log
 .DS_Store

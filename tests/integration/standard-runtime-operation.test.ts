@@ -20,6 +20,7 @@ import type {
 const databaseUrl = process.env.DATABASE_URL;
 
 class FakeProvisioner implements StandardRuntimeProvisioner {
+  async listManagedTasks() { return []; }
   readonly stopped: string[] = [];
   inspection: StandardRuntimeInspection = {
     state: "running",
