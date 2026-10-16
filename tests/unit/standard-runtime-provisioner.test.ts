@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   DescribeTasksCommand,
+  ListTasksCommand,
   RunTaskCommand,
   StopTaskCommand,
 } from "@aws-sdk/client-ecs";
@@ -63,6 +64,16 @@ test("Fargate provisioner launches a private task bound to workspace identity", 
         terminationPolicy: {
           deleteOnTermination: false,
         },
+        tagSpecifications: [
+          {
+            resourceType: "volume",
+            tags: [
+              { key: "ManagedBy", value: "aws-internal-lab" },
+              { key: "WorkspaceId", value: "workspace-1" },
+              { key: "SessionId", value: "session-1" },
+            ],
+          },
+        ],
         sizeInGiB: 8,
       },
     },
@@ -149,4 +160,39 @@ test("Fargate provisioner rejects a single-subnet configuration", () => {
       }),
     /at least two AZs/,
   );
+});
+
+test("Fargate provisioner inventories only tagged managed tasks across pages", async () => {
+  const client = {
+    async send(command: RunTaskCommand | StopTaskCommand | DescribeTasksCommand | ListTasksCommand) {
+      if (command instanceof ListTasksCommand) {
+        return command.input.nextToken
+          ? { taskArns: ["task-c"] }
+          : { taskArns: ["task-a", "task-b"], nextToken: "page-2" };
+      }
+      if (command instanceof DescribeTasksCommand) {
+        return {
+          tasks: command.input.tasks?.map((taskArn) => ({
+            taskArn,
+            createdAt: new Date("2026-10-07T00:00:00.000Z"),
+            tags: taskArn === "task-b" ? [] : [{ key: "ManagedBy", value: "aws-internal-lab" }],
+          })),
+        };
+      }
+      return {};
+    },
+  };
+  const provisioner = new EcsStandardRuntimeProvisioner({
+    clusterArn: "cluster-arn",
+    taskDefinitionArn: "task-def-arn",
+    subnetIds: ["subnet-a", "subnet-b"],
+    securityGroupIds: ["sg-runtime"],
+    ebsInfrastructureRoleArn: "arn:aws:iam::123456789012:role/ecs-ebs",
+    client,
+  });
+
+  assert.deepEqual(await provisioner.listManagedTasks(), [
+    { taskArn: "task-a", createdAt: new Date("2026-10-07T00:00:00.000Z") },
+    { taskArn: "task-c", createdAt: new Date("2026-10-07T00:00:00.000Z") },
+  ]);
 });

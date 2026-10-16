@@ -7,6 +7,7 @@ import {
   S3Client,
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
+import { isVirtualRegion } from "../../aws-virtual/src/index.js";
 
 export type StandardSnapshotManifest = {
   snapshotFormatVersion: 1;
@@ -90,11 +91,40 @@ export class S3SnapshotManifestStore implements SnapshotManifestStore {
     const body = await result.Body.transformToString();
     const expected = result.Metadata?.sha256;
     const actual = createHash("sha256").update(body).digest("hex");
-    if (expected && expected !== actual) {
+    if (!expected) throw new Error("SNAPSHOT_MANIFEST_CHECKSUM_MISSING");
+    if (expected !== actual) {
       throw new Error("SNAPSHOT_MANIFEST_CHECKSUM_MISMATCH");
     }
 
-    return JSON.parse(body) as StandardSnapshotManifest;
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(body);
+    } catch {
+      throw new Error("SNAPSHOT_MANIFEST_INVALID");
+    }
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+      throw new Error("SNAPSHOT_MANIFEST_INVALID");
+    }
+    const value = manifest as Record<string, unknown>;
+    if (
+      value.snapshotFormatVersion !== 1 ||
+      value.runtimeType !== "standard" ||
+      value.payloadType !== "ebs-snapshot" ||
+      value.consistencyLevel !== "application-consistent" ||
+      typeof value.snapshotId !== "string" || !value.snapshotId ||
+      typeof value.workspaceId !== "string" || !value.workspaceId ||
+      typeof value.sourceSessionId !== "string" || !value.sourceSessionId ||
+      typeof value.ebsSnapshotId !== "string" || !/^snap-[a-zA-Z0-9]+$/.test(value.ebsSnapshotId) ||
+      typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) ||
+      !Array.isArray(value.virtualRegions) ||
+      value.virtualRegions.length === 0 ||
+      !value.virtualRegions.every((region) => typeof region === "string" && isVirtualRegion(region)) ||
+      key !== `snapshots/${value.workspaceId}/${value.snapshotId}/manifest.json`
+    ) {
+      throw new Error("SNAPSHOT_MANIFEST_INVALID");
+    }
+
+    return value as StandardSnapshotManifest;
   }
 
   async deleteManifest(key: string): Promise<void> {

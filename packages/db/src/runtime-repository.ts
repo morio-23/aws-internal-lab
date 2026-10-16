@@ -144,6 +144,27 @@ export async function markStandardRuntimeReady(input: {
   }
 }
 
+export async function recordStandardRuntimeTaskStarted(input: {
+  databaseUrl: string;
+  runtimeId: string;
+  providerRef: string;
+}): Promise<void> {
+  const sql = postgres(input.databaseUrl, { max: 1 });
+  try {
+    const rows = await sql<{ id: string }[]>`
+      UPDATE lab_runtime
+      SET provider_ref = ${input.providerRef}
+      WHERE id = ${input.runtimeId}
+        AND status = 'starting'
+        AND deleted_at IS NULL
+      RETURNING id
+    `;
+    if (!rows[0]) throw new Error("STARTING_RUNTIME_NOT_FOUND");
+  } finally {
+    await sql.end();
+  }
+}
+
 export async function getActiveRuntimeForWorkspace(input: {
   databaseUrl: string;
   workspaceId: string;

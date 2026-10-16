@@ -193,3 +193,31 @@ export async function markSnapshotRestored(input: {
     await sql.end();
   }
 }
+
+
+export async function listProtectedStandardSnapshotIds(input: {
+  databaseUrl: string;
+  creatingNewerThan?: Date;
+}): Promise<string[]> {
+  const sql = postgres(input.databaseUrl, { max: 1 });
+  try {
+    const creatingNewerThan =
+      input.creatingNewerThan ?? new Date(Date.now() - 60 * 60_000);
+    const rows = await sql<{ id: string }[]>`
+      SELECT id
+      FROM lab_snapshot
+      WHERE runtime_type = 'standard'
+        AND deleted_at IS NULL
+        AND (
+          status IN ('available', 'restoring', 'quarantined')
+          OR (
+            status = 'creating'
+            AND created_at >= ${creatingNewerThan}
+          )
+        )
+    `;
+    return rows.map((row) => row.id);
+  } finally {
+    await sql.end();
+  }
+}

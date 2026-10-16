@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   createStandardSnapshotRecord,
   getAvailableSnapshotForWorkspace,
+  listProtectedStandardSnapshotIds,
+  markSnapshotFailed,
   markSnapshotRestored,
   markStandardSnapshotAvailable,
 } from "../../packages/db/src/snapshot-repository.js";
@@ -57,4 +59,29 @@ test("Standard snapshot record publishes atomically and becomes current workspac
     databaseUrl,
     snapshotId: snapshot.id,
   });
+
+  const failedSnapshot = await createStandardSnapshotRecord({
+    databaseUrl,
+    workspaceId: workspace.id,
+    sourceSessionId: runtime.sessionId,
+  });
+  await markSnapshotFailed({
+    databaseUrl,
+    snapshotId: failedSnapshot.id,
+    errorCode: "TEST_FAILURE",
+  });
+
+  const creatingSnapshot = await createStandardSnapshotRecord({
+    databaseUrl,
+    workspaceId: workspace.id,
+    sourceSessionId: runtime.sessionId,
+  });
+
+  const protectedIds = await listProtectedStandardSnapshotIds({
+    databaseUrl,
+    creatingNewerThan: new Date(Date.now() - 60 * 60_000),
+  });
+  assert.ok(protectedIds.includes(snapshot.id));
+  assert.ok(protectedIds.includes(creatingSnapshot.id));
+  assert.equal(protectedIds.includes(failedSnapshot.id), false);
 });

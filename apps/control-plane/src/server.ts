@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -15,6 +15,7 @@ import { assertVirtualRegion } from "../../../packages/aws-virtual/src/index.js"
 import { signRuntimeToken } from "../../../packages/runtime-auth/src/index.js";
 import { prototypeCapabilityRegistry } from "../../../packages/service-capabilities/src/index.js";
 import { resolvePrototypeIdentity } from "./auth.js";
+import { relayRuntimeAdmin, type RuntimeAdminIdentity } from "./runtime-admin-relay.js";
 
 const port = Number(process.env.PORT ?? "3001");
 
@@ -57,6 +58,27 @@ export const server = createServer(async (request, response) => {
 
     if (request.url === "/readyz") {
       json(response, 200, { status: "ready" });
+      return;
+    }
+
+    const internalAdminMatch = request.url?.match(/^\/internal\/runtime-admin\/(quiesce|persist|unquiesce)$/);
+    if (internalAdminMatch && request.method === "POST") {
+      const databaseUrl = process.env.DATABASE_URL;
+      const privateKeyB64 = process.env.PLATFORM_RUNTIME_PRIVATE_KEY_B64;
+      if (!databaseUrl || !privateKeyB64) {
+        json(response, 503, { error: { code: "RUNTIME_ADMIN_RELAY_UNAVAILABLE" } });
+        return;
+      }
+      const publicKeyPem = createPublicKey(Buffer.from(privateKeyB64, "base64").toString("utf8"))
+        .export({ type: "spki", format: "pem" }).toString();
+      const status = await relayRuntimeAdmin({
+        action: internalAdminMatch[1] as "quiesce" | "persist" | "unquiesce",
+        identity: (await readJsonBody(request)) as RuntimeAdminIdentity,
+        authorization: firstHeader(request.headers.authorization),
+        publicKeyPem,
+        resolveRuntime: (workspaceId) => getActiveRuntimeForWorkspace({ databaseUrl, workspaceId }),
+      });
+      json(response, status, status === 200 ? { status: "ok" } : { error: { code: "RUNTIME_ADMIN_RELAY_FAILED" } });
       return;
     }
 

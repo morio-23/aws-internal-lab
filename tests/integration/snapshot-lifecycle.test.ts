@@ -30,6 +30,7 @@ import type {
 const databaseUrl = process.env.DATABASE_URL;
 
 class SnapshotFakeProvisioner implements StandardRuntimeProvisioner {
+  async listManagedTasks() { return []; }
   generation = 0;
   currentTaskArn: string | null = null;
   currentVolumeId: string | null = null;
@@ -91,6 +92,14 @@ class SnapshotFakeManager implements StandardSnapshotManager {
   async deleteSnapshot(snapshotId: string) {
     this.deletedSnapshots.push(snapshotId);
   }
+
+  async listManagedVolumes() {
+    return [];
+  }
+
+  async listManagedSnapshots() {
+    return [];
+  }
 }
 
 class MemoryManifestStore implements SnapshotManifestStore {
@@ -132,6 +141,14 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
   const provisioner = new SnapshotFakeProvisioner();
   const snapshotManager = new SnapshotFakeManager();
   const manifestStore = new MemoryManifestStore();
+  const gatewayAdmin = {
+    quiesced: 0,
+    persisted: 0,
+    unquiesced: 0,
+    async quiesce() { this.quiesced += 1; },
+    async persist() { this.persisted += 1; },
+    async unquiesce() { this.unquiesced += 1; },
+  };
 
   const start = await createLifecycleOperation({
     databaseUrl,
@@ -172,6 +189,7 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
     provisioner,
     snapshotManager,
     manifestStore,
+    gatewayAdmin,
     now: () => new Date("2026-10-07T10:00:00.000Z"),
   });
 
@@ -184,6 +202,9 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
   );
   assert.deepEqual(snapshotManager.createdFromVolumes, ["vol-snapshot-1"]);
   assert.deepEqual(snapshotManager.deletedVolumes, ["vol-snapshot-1"]);
+  assert.equal(gatewayAdmin.quiesced, 1);
+  assert.equal(gatewayAdmin.persisted, 1);
+  assert.equal(gatewayAdmin.unquiesced, 0);
 
   const snapshot = await getAvailableSnapshotForWorkspace({
     databaseUrl,
@@ -221,4 +242,81 @@ test("Standard Runtime suspends to EBS snapshot and resumes into a new task", as
     undefined,
     "snap-phase0-001",
   ]);
+});
+
+
+test("failed snapshot creation leaves the source Runtime running and unquiesces it", async (t) => {
+  if (!databaseUrl) {
+    t.skip("DATABASE_URL is not configured");
+    return;
+  }
+
+  const identity = {
+    subject: "snapshot-rollback-" + Date.now(),
+    roles: ["Learner"] as const,
+  };
+  const workspace = await createWorkspace({ databaseUrl, identity });
+  const provisioner = new SnapshotFakeProvisioner();
+  const snapshotManager: StandardSnapshotManager = {
+    async createSnapshot() {
+      throw new Error("simulated snapshot failure");
+    },
+    async deleteVolume() {},
+    async deleteSnapshot() {},
+    async listManagedVolumes() { return []; },
+    async listManagedSnapshots() { return []; },
+  };
+  const manifestStore = new MemoryManifestStore();
+  const events: string[] = [];
+  const gatewayAdmin = {
+    async quiesce() { events.push("quiesce"); },
+    async persist() { events.push("persist"); },
+    async unquiesce() { events.push("unquiesce"); },
+  };
+
+  const start = await createLifecycleOperation({
+    databaseUrl,
+    workspaceId: workspace.id,
+    idempotencyKey: "rollback-start",
+    operationType: "start",
+    requestedBy: identity.subject,
+    correlationId: "corr-rollback-start",
+    requestHash: "hash-rollback-start",
+  });
+  await executeStandardRuntimeOperation({
+    databaseUrl,
+    operationId: start.operation.id,
+    provisioner,
+  });
+
+  const suspend = await createLifecycleOperation({
+    databaseUrl,
+    workspaceId: workspace.id,
+    idempotencyKey: "rollback-suspend",
+    operationType: "suspend",
+    requestedBy: identity.subject,
+    correlationId: "corr-rollback-suspend",
+    requestHash: "hash-rollback-suspend",
+  });
+
+  await assert.rejects(
+    () =>
+      executeStandardRuntimeOperation({
+        databaseUrl,
+        operationId: suspend.operation.id,
+        provisioner,
+        snapshotManager,
+        manifestStore,
+        gatewayAdmin,
+      }),
+    /simulated snapshot failure/,
+  );
+
+  const active = await getActiveRuntimeForWorkspace({
+    databaseUrl,
+    workspaceId: workspace.id,
+  });
+  assert.equal(active?.providerRef, "task-snapshot-1");
+  assert.equal(provisioner.stopped, false);
+  assert.deepEqual(events, ["quiesce", "persist", "unquiesce"]);
 });
